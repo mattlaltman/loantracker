@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Hard Money Loan Tracker</title>
+  <title>Loan Tracker</title>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -42,8 +42,8 @@
     // Replace these with your Supabase project credentials
     // Found at: Supabase Dashboard > Settings > API
     // ============================================
-    const SUPABASE_URL = 'https://esqunsnyvdwiqzltxvop.supabase.co';
-    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVzcXVuc255dmR3aXF6bHR4dm9wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAyMzkyOTQsImV4cCI6MjA4NTgxNTI5NH0._rKWD8kTXiZXC-KARIkEjJ5jPnSDHhfrnI7oLfc_n3Y';
+    const SUPABASE_URL = 'YOUR_SUPABASE_URL';
+    const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
     const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     // Helper: convert loan object to Supabase row (camelCase -> snake_case)
@@ -1502,6 +1502,7 @@
       const metrics = calculateLoanMetrics(loan);
       const paymentStatus = getPaymentStatus(loan, metrics);
       const sortedTransactions = [...loan.transactions].sort((a, b) => new Date(b.date) - new Date(a.date));
+      const [showDailyTable, setShowDailyTable] = useState(false);
 
       const statCards = [
         { label: 'Current Balance', value: formatCurrency(metrics.currentBalance), color: '#63b3ed', icon: 'TrendingUp' },
@@ -1720,6 +1721,98 @@
                 })}
               </div>
             </div>
+
+            {/* Daily Interest Accrual Table */}
+            {metrics.dailyBreakdown?.days?.length > 0 && (
+              <div style={{
+                background: 'linear-gradient(135deg, #1a1f2e 0%, #0f1219 100%)',
+                borderRadius: '16px',
+                border: '1px solid rgba(255,255,255,0.08)',
+                marginBottom: '24px',
+                overflow: 'hidden',
+              }}>
+                <button
+                  onClick={() => setShowDailyTable(!showDailyTable)}
+                  style={{
+                    width: '100%',
+                    background: 'none',
+                    border: 'none',
+                    padding: '16px 24px',
+                    color: '#fff',
+                    fontSize: '16px',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                  }}
+                >
+                  <span>Daily Interest Accrual Table</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ color: '#718096', fontSize: '12px', fontWeight: '400' }}>
+                      {metrics.dailyBreakdown.days.length} days
+                    </span>
+                    <Icon name={showDailyTable ? "ChevronUp" : "ChevronDown"} size={18} style={{ color: '#718096' }} />
+                  </div>
+                </button>
+                {showDailyTable && (
+                  <div style={{ padding: '0 24px 24px', overflowX: 'auto' }}>
+                    <table style={{
+                      width: '100%',
+                      borderCollapse: 'collapse',
+                      fontSize: '13px',
+                      fontFamily: '"JetBrains Mono", monospace',
+                    }}>
+                      <thead>
+                        <tr>
+                          {['Date', 'Outstanding Balance', 'Daily Interest', 'Interest Owed', 'Interest Payment'].map((h, i) => (
+                            <th key={i} style={{
+                              textAlign: i === 0 ? 'left' : 'right',
+                              padding: '10px 12px',
+                              color: '#a0aec0',
+                              fontSize: '10px',
+                              textTransform: 'uppercase',
+                              letterSpacing: '0.5px',
+                              borderBottom: '1px solid rgba(255,255,255,0.1)',
+                              position: 'sticky',
+                              top: 0,
+                              background: '#1a1f2e',
+                              fontWeight: '600',
+                            }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...metrics.dailyBreakdown.days].reverse().map((day, i) => {
+                          const hasPayment = day.interestPayment > 0;
+                          return (
+                            <tr key={day.date} style={{
+                              background: hasPayment ? 'rgba(72, 187, 120, 0.08)' : i % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent',
+                            }}>
+                              <td style={{ padding: '8px 12px', color: '#e2e8f0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                                {formatDate(day.date)}
+                              </td>
+                              <td style={{ padding: '8px 12px', color: '#63b3ed', textAlign: 'right', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                                {formatCurrency(day.balance)}
+                              </td>
+                              <td style={{ padding: '8px 12px', color: '#f6ad55', textAlign: 'right', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                                {formatCurrency(day.dailyInterest)}
+                              </td>
+                              <td style={{ padding: '8px 12px', color: day.interestOwed > 0 ? '#ef4444' : '#68d391', textAlign: 'right', fontWeight: '600', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                                {formatCurrency(day.interestOwed)}
+                              </td>
+                              <td style={{ padding: '8px 12px', color: hasPayment ? '#68d391' : '#4a5568', textAlign: 'right', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                                {hasPayment ? formatCurrency(day.interestPayment) : '—'}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div style={{
               background: 'linear-gradient(135deg, #1a1f2e 0%, #0f1219 100%)',
@@ -2381,6 +2474,7 @@
     function LoginScreen({ onAuth }) {
       const [email, setEmail] = useState('');
       const [password, setPassword] = useState('');
+      const [accessCode, setAccessCode] = useState('');
       const [isSignUp, setIsSignUp] = useState(false);
       const [error, setError] = useState('');
       const [loading, setLoading] = useState(false);
@@ -2394,6 +2488,17 @@
 
         try {
           if (isSignUp) {
+            // Validate access code before creating account
+            const { data: codeMatch } = await supabaseClient
+              .from('access_codes')
+              .select('code')
+              .eq('code', accessCode.trim().toLowerCase())
+              .single();
+
+            if (!codeMatch) {
+              throw new Error('Invalid access code.');
+            }
+
             const { data, error: signUpError } = await supabaseClient.auth.signUp({
               email,
               password,
@@ -2446,7 +2551,7 @@
                 <Icon name="DollarSign" size={26} style={{ color: '#fff' }} />
               </div>
               <h1 style={{ color: '#fff', fontSize: '22px', fontWeight: '700', margin: '0 0 4px 0' }}>
-                Hard Money Loan Tracker
+                Loan Tracker
               </h1>
               <p style={{ color: '#718096', fontSize: '14px', margin: 0 }}>
                 {isSignUp ? 'Create your account' : 'Sign in to your account'}
@@ -2478,7 +2583,7 @@
                 />
               </div>
 
-              <div style={{ marginBottom: '24px' }}>
+              <div style={{ marginBottom: '16px' }}>
                 <label style={{ display: 'block', color: '#a0aec0', fontSize: '13px', marginBottom: '6px' }}>
                   Password
                 </label>
@@ -2502,6 +2607,32 @@
                   placeholder="Min 6 characters"
                 />
               </div>
+
+              {isSignUp && (
+                <div style={{ marginBottom: '16px' }}>
+                  <label style={{ display: 'block', color: '#a0aec0', fontSize: '13px', marginBottom: '6px' }}>
+                    Access Code
+                  </label>
+                  <input
+                    type="text"
+                    value={accessCode}
+                    onChange={(e) => setAccessCode(e.target.value)}
+                    required
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      background: 'rgba(255,255,255,0.05)',
+                      border: '1px solid rgba(255,255,255,0.15)',
+                      borderRadius: '8px',
+                      color: '#e2e8f0',
+                      fontSize: '14px',
+                      outline: 'none',
+                      boxSizing: 'border-box',
+                    }}
+                    placeholder="Enter access code"
+                  />
+                </div>
+              )}
 
               {error && (
                 <div style={{
@@ -2959,7 +3090,7 @@
                   <Icon name="DollarSign" size={22} style={{ color: '#fff' }} />
                 </div>
                 <h1 style={{ color: '#fff', fontSize: '28px', fontWeight: '700', margin: 0 }}>
-                  Hard Money Loan Tracker
+                  Loan Tracker
                 </h1>
               </div>
               <p style={{ color: '#718096', fontSize: '15px', margin: 0 }}>
