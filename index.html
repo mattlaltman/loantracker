@@ -1721,18 +1721,19 @@
                 })}
               </div>
             </div>
+          </div>
 
-            {/* Daily Interest Accrual Table */}
-            {metrics.dailyBreakdown?.days?.length > 0 && (
-              <div style={{
-                background: 'linear-gradient(135deg, #1a1f2e 0%, #0f1219 100%)',
-                borderRadius: '16px',
-                border: '1px solid rgba(255,255,255,0.08)',
-                marginBottom: '24px',
-                overflow: 'hidden',
-              }}>
-                <button
-                  onClick={() => setShowDailyTable(!showDailyTable)}
+          {/* Daily Interest Accrual Table */}
+          {metrics.dailyBreakdown?.days?.length > 0 && (
+            <div style={{
+              background: 'linear-gradient(135deg, #1a1f2e 0%, #0f1219 100%)',
+              borderRadius: '16px',
+              border: '1px solid rgba(255,255,255,0.08)',
+              marginBottom: '24px',
+              overflow: 'hidden',
+            }}>
+              <button
+                onClick={() => setShowDailyTable(!showDailyTable)}
                   style={{
                     width: '100%',
                     background: 'none',
@@ -1930,7 +1931,6 @@
                 </div>
               )}
             </div>
-          </div>
         </div>
       );
     }
