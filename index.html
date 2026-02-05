@@ -1,0 +1,3264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hard Money Loan Tracker</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { 
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: linear-gradient(180deg, #0a0d14 0%, #111827 100%);
+      min-height: 100vh;
+      color: #e2e8f0;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    input::-webkit-outer-spin-button,
+    input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    input[type=number] { -moz-appearance: textfield; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: rgba(255,255,255,0.05); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.3); }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // ============================================
+    // SUPABASE CONFIGURATION
+    // Replace these with your Supabase project credentials
+    // Found at: Supabase Dashboard > Settings > API
+    // ============================================
+    const SUPABASE_URL = 'https://esqunsnyvdwiqzltxvop.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVzcXVuc255dmR3aXF6bHR4dm9wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAyMzkyOTQsImV4cCI6MjA4NTgxNTI5NH0._rKWD8kTXiZXC-KARIkEjJ5jPnSDHhfrnI7oLfc_n3Y';
+    const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    // Helper: convert loan object to Supabase row (camelCase -> snake_case)
+    function loanToRow(loan, userId) {
+      return {
+        id: loan.id,
+        user_id: userId,
+        lender_name: loan.lenderName || '',
+        lender_address: loan.lenderAddress || '',
+        borrower_name: loan.borrowerName || '',
+        borrower_address: loan.borrowerAddress || '',
+        borrower_contacts: loan.borrowerContacts || [],
+        property_address: loan.propertyAddress || '',
+        parcel_number: loan.parcelNumber || '',
+        county: loan.county || '',
+        total_loan_amount: loan.totalLoanAmount || 0,
+        interest_rate: loan.interestRate || 0,
+        origination_fee_percent: loan.originationFeePercent || 0,
+        origination_fee: loan.originationFee || 0,
+        land_value: loan.landValue || 0,
+        acreage: loan.acreage || 0,
+        term_months: loan.termMonths || '',
+        date_originated: loan.dateOriginated || null,
+        draw_schedule: loan.drawSchedule || [],
+      };
+    }
+
+    // Helper: convert Supabase row to loan object (snake_case -> camelCase)
+    function rowToLoan(row) {
+      return {
+        id: row.id,
+        lenderName: row.lender_name || '',
+        lenderAddress: row.lender_address || '',
+        borrowerName: row.borrower_name || '',
+        borrowerAddress: row.borrower_address || '',
+        borrowerContacts: row.borrower_contacts || [],
+        propertyAddress: row.property_address || '',
+        parcelNumber: row.parcel_number || '',
+        county: row.county || '',
+        totalLoanAmount: parseFloat(row.total_loan_amount) || 0,
+        interestRate: parseFloat(row.interest_rate) || 0,
+        originationFeePercent: parseFloat(row.origination_fee_percent) || 0,
+        originationFee: parseFloat(row.origination_fee) || 0,
+        landValue: parseFloat(row.land_value) || 0,
+        acreage: parseFloat(row.acreage) || 0,
+        termMonths: row.term_months || '',
+        dateOriginated: row.date_originated || '',
+        drawSchedule: row.draw_schedule || [],
+        transactions: [], // populated separately
+      };
+    }
+
+    // Helper: convert transaction row from Supabase
+    function rowToTransaction(row) {
+      return {
+        id: row.id,
+        type: row.type,
+        amount: parseFloat(row.amount) || 0,
+        date: row.date,
+        description: row.description || '',
+      };
+    }
+
+    // Simple icon components using Lucide
+    const Icon = ({ name, size = 16, style = {} }) => {
+      const ref = React.useRef(null);
+      useEffect(() => {
+        if (ref.current && lucide[name]) {
+          ref.current.innerHTML = '';
+          const svg = lucide.createElement(lucide[name]);
+          svg.setAttribute('width', size);
+          svg.setAttribute('height', size);
+          Object.entries(style).forEach(([key, value]) => {
+            svg.style[key] = value;
+          });
+          ref.current.appendChild(svg);
+        }
+      }, [name, size, style]);
+      return <span ref={ref} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }} />;
+    };
+
+    // Initial loan data from the contracts
+    const initialLoans = [
+      {
+        id: 'loan-1',
+        lenderName: 'Matthew L. Altman',
+        lenderAddress: '2028 E Tiffany Ct, Gilbert, AZ 85298',
+        borrowerName: 'Whitefish Developers, LLC',
+        borrowerAddress: '4960 S. Gilbert Road Suite 1-500, Chandler, AZ 85249',
+        borrowerContacts: ['Daniel Keenan', 'Russell Haugan'],
+        propertyAddress: '3734 E Weston Ln, San Tan Valley, AZ 85140',
+        parcelNumber: '210-05-190A',
+        county: 'Pinal County, AZ',
+        totalLoanAmount: 625000,
+        interestRate: 9.0,
+        originationFeePercent: 1.0,
+        originationFee: 6250,
+        landValue: 340000,
+        acreage: 1.26,
+        termMonths: '6-9',
+        dateOriginated: '2025-12-08',
+        drawSchedule: [
+          { draw: 1, timing: 'At closing', amount: 150000, condition: 'Execution of loan docs; lien recorded' },
+          { draw: 2, timing: '~30-45 days after Draw 1', amount: 150000, condition: 'Verified progress' },
+          { draw: 3, timing: '~60-75 days after Draw 2', amount: 150000, condition: 'Verified progress' },
+          { draw: 4, timing: '~90+ days after Draw 3', amount: 175000, condition: 'Verified progress' },
+        ],
+        transactions: [],
+      },
+      {
+        id: 'loan-2',
+        lenderName: 'Matthew L. Altman',
+        lenderAddress: '2028 E Tiffany Ct, Gilbert, AZ 85298',
+        borrowerName: 'Whitefish Developers, LLC',
+        borrowerAddress: '4960 S. Gilbert Road Suite 1-500, Chandler, AZ 85249',
+        borrowerContacts: ['Daniel Keenan', 'Russell Haugan'],
+        propertyAddress: '3782 E Weston Ln, San Tan Valley, AZ 85140',
+        parcelNumber: '210-05-190B',
+        county: 'Pinal County, AZ',
+        totalLoanAmount: 625000,
+        interestRate: 9.0,
+        originationFeePercent: 1.0,
+        originationFee: 6250,
+        landValue: 340000,
+        acreage: 1.26,
+        termMonths: '6-9',
+        dateOriginated: '2025-12-08',
+        drawSchedule: [
+          { draw: 1, timing: 'At closing', amount: 150000, condition: 'Execution of loan docs; lien recorded' },
+          { draw: 2, timing: '~30-45 days after Draw 1', amount: 150000, condition: 'Verified progress' },
+          { draw: 3, timing: '~60-75 days after Draw 2', amount: 150000, condition: 'Verified progress' },
+          { draw: 4, timing: '~90+ days after Draw 3', amount: 175000, condition: 'Verified progress' },
+        ],
+        transactions: [],
+      },
+    ];
+
+    const transactionTypes = [
+      { value: 'draw', label: 'Loan Draw', icon: 'ArrowUpRight', color: '#ef4444', description: 'Funds disbursed to borrower' },
+      { value: 'interest_payment', label: 'Interest Payment', icon: 'ArrowDownLeft', color: '#22c55e', description: 'Monthly interest from borrower' },
+      { value: 'origination_fee', label: 'Origination Fee', icon: 'DollarSign', color: '#22c55e', description: 'Fee paid at first draw' },
+      { value: 'principal_payment', label: 'Principal Payment', icon: 'ArrowDownLeft', color: '#22c55e', description: 'Principal repayment' },
+      { value: 'other_fee', label: 'Other Fee/Expense', icon: 'FileText', color: '#f59e0b', description: 'Title, escrow, recording fees' },
+    ];
+
+    function formatCurrency(amount) {
+      return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        minimumFractionDigits: 2,
+      }).format(amount);
+    }
+
+    function formatDate(dateString) {
+      // Parse the date parts manually to avoid timezone issues
+      const [year, month, day] = dateString.split('-').map(Number);
+      const date = new Date(year, month - 1, day); // month is 0-indexed
+      return date.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      });
+    }
+
+    function parseLocalDate(dateString) {
+      const [year, month, day] = dateString.split('-').map(Number);
+      return new Date(year, month - 1, day);
+    }
+
+    function getPaymentStatus(loan, metrics) {
+      if (!metrics.originationDate) {
+        return { 
+          nextDueDate: null, 
+          isOverdue: false, 
+          daysUntilDue: null, 
+          daysPastDue: null,
+          interestOwed: 0,
+          daysAccrued: 0,
+        };
+      }
+
+      const originationDate = parseLocalDate(metrics.originationDate);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      // First payment due 30 days after origination
+      const firstPaymentDue = new Date(originationDate);
+      firstPaymentDue.setDate(firstPaymentDue.getDate() + 30);
+      
+      // Calculate days since origination
+      const daysSinceOrigination = Math.floor((today - originationDate) / (1000 * 60 * 60 * 24));
+      
+      // Check if there's interest owed (unpaid accrued interest)
+      const interestOwed = metrics.interestOwedToday;
+      const isOverdue = interestOwed > 0 && daysSinceOrigination >= 30;
+      
+      // Find the last interest payment date
+      const interestPayments = loan.transactions.filter(t => t.type === 'interest_payment');
+      const lastPaymentDate = interestPayments.length > 0
+        ? parseLocalDate(interestPayments.reduce((latest, p) => p.date > latest ? p.date : latest, interestPayments[0].date))
+        : null;
+      
+      // Calculate next due date (30 days after last payment, or first due date)
+      let nextDueDate;
+      if (lastPaymentDate) {
+        nextDueDate = new Date(lastPaymentDate);
+        nextDueDate.setDate(nextDueDate.getDate() + 30);
+      } else {
+        nextDueDate = firstPaymentDue;
+      }
+      
+      // Days until due or past due
+      const daysUntilDue = Math.floor((nextDueDate - today) / (1000 * 60 * 60 * 24));
+      const daysPastDue = daysUntilDue < 0 ? Math.abs(daysUntilDue) : 0;
+      
+      // Days of interest accrued since last payment
+      const daysAccrued = metrics.dailyBreakdown?.daysSinceLastPayment || 0;
+
+      return { 
+        nextDueDate, 
+        isOverdue: isOverdue || daysPastDue > 0,
+        daysUntilDue: daysUntilDue > 0 ? daysUntilDue : 0,
+        daysPastDue,
+        interestOwed,
+        daysAccrued,
+      };
+    }
+
+    function calculateLoanMetrics(loan) {
+      const draws = loan.transactions.filter(t => t.type === 'draw');
+      const interestPayments = loan.transactions.filter(t => t.type === 'interest_payment');
+      const principalPayments = loan.transactions.filter(t => t.type === 'principal_payment');
+      const originationFees = loan.transactions.filter(t => t.type === 'origination_fee');
+
+      const totalDrawn = draws.reduce((sum, t) => sum + t.amount, 0);
+      const totalInterestPaid = interestPayments.reduce((sum, t) => sum + t.amount, 0);
+      const totalPrincipalPaid = principalPayments.reduce((sum, t) => sum + t.amount, 0);
+      const totalOriginationPaid = originationFees.reduce((sum, t) => sum + t.amount, 0);
+
+      const currentBalance = totalDrawn - totalPrincipalPaid;
+      const remainingAvailable = loan.totalLoanAmount - totalDrawn;
+      
+      // Find origination date from earliest draw
+      const originationDate = draws.length > 0 
+        ? draws.reduce((earliest, d) => d.date < earliest ? d.date : earliest, draws[0].date)
+        : null;
+
+      // Calculate cumulative draw thresholds for progress tracking
+      const drawThresholds = loan.drawSchedule.reduce((acc, draw, i) => {
+        const cumulative = (acc[i - 1] || 0) + draw.amount;
+        acc.push(cumulative);
+        return acc;
+      }, []);
+
+      // Daily interest rate
+      const dailyRate = (loan.interestRate / 100) / 365;
+      
+      // Calculate accurate daily interest accrual
+      const dailyBreakdown = calculateDailyInterest(loan, dailyRate);
+      const totalInterestAccrued = dailyBreakdown.totalInterestAccrued;
+      const interestOwedToday = dailyBreakdown.interestOwed || 0;
+      
+      // Current daily interest based on current balance
+      const dailyInterest = currentBalance * dailyRate;
+
+      return {
+        totalDrawn,
+        totalInterestPaid,
+        totalPrincipalPaid,
+        totalOriginationPaid,
+        currentBalance,
+        remainingAvailable,
+        dailyInterest,
+        dailyRate,
+        totalInterestAccrued,
+        interestOwedToday,
+        drawCount: draws.length,
+        originationDate,
+        drawThresholds,
+        dailyBreakdown,
+      };
+    }
+
+    function calculateDailyInterest(loan, dailyRate) {
+      const transactions = [...loan.transactions].sort((a, b) => 
+        parseLocalDate(a.date) - parseLocalDate(b.date)
+      );
+      
+      if (transactions.length === 0) {
+        return { 
+          days: [], 
+          totalInterestAccrued: 0,
+          daysSinceLastPayment: 0,
+          interestSinceLastPayment: 0,
+        };
+      }
+
+      const draws = transactions.filter(t => t.type === 'draw');
+      const principalPayments = transactions.filter(t => t.type === 'principal_payment');
+      const interestPayments = transactions.filter(t => t.type === 'interest_payment');
+      
+      if (draws.length === 0) {
+        return { 
+          days: [], 
+          totalInterestAccrued: 0,
+          daysSinceLastPayment: 0,
+          interestSinceLastPayment: 0,
+        };
+      }
+
+      // Find the earliest transaction date and today
+      const startDate = parseLocalDate(draws[0].date);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      // Build a map of balance changes by date
+      const balanceChanges = {};
+      
+      draws.forEach(t => {
+        const dateKey = t.date;
+        balanceChanges[dateKey] = (balanceChanges[dateKey] || 0) + t.amount;
+      });
+      
+      principalPayments.forEach(t => {
+        const dateKey = t.date;
+        balanceChanges[dateKey] = (balanceChanges[dateKey] || 0) - t.amount;
+      });
+
+      // Build a map of interest payments by date
+      const interestPaymentsByDate = {};
+      interestPayments.forEach(t => {
+        interestPaymentsByDate[t.date] = (interestPaymentsByDate[t.date] || 0) + t.amount;
+      });
+
+      // Calculate day by day
+      const days = [];
+      let runningBalance = 0;
+      let totalInterestAccrued = 0;
+      let totalInterestPaidRunning = 0;
+      let interestOwed = 0;
+      let daysSinceLastPayment = 0;
+      
+      const currentDate = new Date(startDate);
+      
+      while (currentDate <= today) {
+        const dateKey = currentDate.toISOString().split('T')[0];
+        
+        // Apply any balance changes for this day (at start of day)
+        if (balanceChanges[dateKey]) {
+          runningBalance += balanceChanges[dateKey];
+        }
+        
+        // Calculate interest for this day
+        const dailyInterest = runningBalance * dailyRate;
+        totalInterestAccrued += dailyInterest;
+        interestOwed += dailyInterest;
+        
+        // Apply any interest payments for this day
+        const dayPayment = interestPaymentsByDate[dateKey] || 0;
+        if (dayPayment > 0) {
+          interestOwed = Math.max(0, interestOwed - dayPayment);
+          totalInterestPaidRunning += dayPayment;
+          daysSinceLastPayment = 0;
+        } else {
+          daysSinceLastPayment++;
+        }
+        
+        days.push({
+          date: dateKey,
+          balance: runningBalance,
+          dailyInterest,
+          cumulativeInterest: totalInterestAccrued,
+          interestOwed,
+          interestPayment: dayPayment,
+          totalInterestPaid: totalInterestPaidRunning,
+        });
+        
+        // Move to next day
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
+
+      return {
+        days,
+        totalInterestAccrued,
+        daysSinceLastPayment,
+        interestOwed,
+      };
+    }
+
+    function LoanCard({ loan, onClick }) {
+      const metrics = calculateLoanMetrics(loan);
+      const utilizationPercent = (metrics.totalDrawn / loan.totalLoanAmount) * 100;
+      const paymentStatus = getPaymentStatus(loan, metrics);
+      const [isHovered, setIsHovered] = useState(false);
+
+      return (
+        <div
+          onClick={onClick}
+          onMouseEnter={() => setIsHovered(true)}
+          onMouseLeave={() => setIsHovered(false)}
+          style={{
+            background: paymentStatus.isOverdue 
+              ? 'linear-gradient(135deg, #2d1f1f 0%, #1a0f0f 100%)'
+              : 'linear-gradient(135deg, #1a1f2e 0%, #0f1219 100%)',
+            borderRadius: '16px',
+            padding: '24px',
+            cursor: 'pointer',
+            border: isHovered 
+              ? (paymentStatus.isOverdue ? '1px solid rgba(239, 68, 68, 0.5)' : '1px solid rgba(99, 179, 237, 0.4)')
+              : '1px solid rgba(255,255,255,0.08)',
+            transition: 'all 0.3s ease',
+            position: 'relative',
+            overflow: 'hidden',
+            transform: isHovered ? 'translateY(-4px)' : 'translateY(0)',
+            boxShadow: isHovered ? '0 20px 40px rgba(0,0,0,0.4)' : 'none',
+          }}
+        >
+          <div style={{
+            position: 'absolute',
+            top: '-50px',
+            right: '-50px',
+            width: '150px',
+            height: '150px',
+            background: paymentStatus.isOverdue 
+              ? 'radial-gradient(circle, rgba(239, 68, 68, 0.2) 0%, transparent 70%)'
+              : 'radial-gradient(circle, rgba(99, 179, 237, 0.15) 0%, transparent 70%)',
+            borderRadius: '50%',
+            pointerEvents: 'none',
+          }} />
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                <Icon name="Building2" size={16} style={{ color: paymentStatus.isOverdue ? '#ef4444' : '#63b3ed' }} />
+                <span style={{ color: '#a0aec0', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '1px' }}>Property</span>
+                {paymentStatus.isOverdue && (
+                  <span style={{
+                    background: '#ef4444',
+                    color: '#fff',
+                    fontSize: '10px',
+                    fontWeight: '700',
+                    padding: '2px 8px',
+                    borderRadius: '4px',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.5px',
+                  }}>
+                    Overdue
+                  </span>
+                )}
+              </div>
+              <h3 style={{ color: '#fff', fontSize: '16px', fontWeight: '600', margin: 0, maxWidth: '280px' }}>
+                {loan.propertyAddress}
+              </h3>
+              <span style={{ color: '#718096', fontSize: '12px' }}>Parcel: {loan.parcelNumber}</span>
+            </div>
+            <Icon name="ChevronRight" size={20} style={{ color: '#4a5568' }} />
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '20px' }}>
+            <div>
+              <div style={{ color: '#718096', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '4px' }}>
+                Lender
+              </div>
+              <div style={{ color: '#e2e8f0', fontSize: '14px', fontWeight: '500' }}>{loan.lenderName}</div>
+            </div>
+            <div>
+              <div style={{ color: '#718096', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '4px' }}>
+                Borrower
+              </div>
+              <div style={{ color: '#e2e8f0', fontSize: '14px', fontWeight: '500' }}>{loan.borrowerName}</div>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '20px' }}>
+            <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: '10px', padding: '12px' }}>
+              <div style={{ color: '#718096', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '4px' }}>
+                Total Loan
+              </div>
+              <div style={{ color: '#fff', fontSize: '18px', fontWeight: '700', fontFamily: '"JetBrains Mono", monospace' }}>
+                {formatCurrency(loan.totalLoanAmount).replace('.00', '')}
+              </div>
+            </div>
+            <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: '10px', padding: '12px' }}>
+              <div style={{ color: '#718096', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '4px' }}>
+                Current Balance
+              </div>
+              <div style={{ color: metrics.currentBalance > 0 ? '#63b3ed' : '#68d391', fontSize: '18px', fontWeight: '700', fontFamily: '"JetBrains Mono", monospace' }}>
+                {formatCurrency(metrics.currentBalance).replace('.00', '')}
+              </div>
+            </div>
+            <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: '10px', padding: '12px' }}>
+              <div style={{ color: '#718096', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '4px' }}>
+                Interest Rate
+              </div>
+              <div style={{ color: '#f6ad55', fontSize: '18px', fontWeight: '700', fontFamily: '"JetBrains Mono", monospace' }}>
+                {loan.interestRate}%
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+              <span style={{ color: '#718096', fontSize: '11px' }}>Loan Utilization</span>
+              <span style={{ color: '#a0aec0', fontSize: '11px', fontFamily: '"JetBrains Mono", monospace' }}>
+                {utilizationPercent.toFixed(1)}%
+              </span>
+            </div>
+            <div style={{ height: '6px', background: 'rgba(255,255,255,0.1)', borderRadius: '3px', overflow: 'hidden' }}>
+              <div style={{
+                width: `${utilizationPercent}%`,
+                height: '100%',
+                background: utilizationPercent > 80 ? 'linear-gradient(90deg, #f6ad55, #ed8936)' :
+                            utilizationPercent > 50 ? 'linear-gradient(90deg, #63b3ed, #4299e1)' :
+                            'linear-gradient(90deg, #68d391, #48bb78)',
+                borderRadius: '3px',
+                transition: 'width 0.5s ease',
+              }} />
+            </div>
+          </div>
+
+          {/* Payment Status */}
+          {metrics.originationDate && (
+            <div style={{
+              marginTop: '16px',
+              padding: '12px',
+              borderRadius: '10px',
+              background: paymentStatus.isOverdue 
+                ? 'rgba(239, 68, 68, 0.15)' 
+                : paymentStatus.daysUntilDue <= 7 
+                  ? 'rgba(246, 173, 85, 0.15)'
+                  : 'rgba(72, 187, 120, 0.1)',
+              border: paymentStatus.isOverdue 
+                ? '1px solid rgba(239, 68, 68, 0.3)' 
+                : paymentStatus.daysUntilDue <= 7
+                  ? '1px solid rgba(246, 173, 85, 0.3)'
+                  : '1px solid rgba(72, 187, 120, 0.2)',
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Icon 
+                    name={paymentStatus.isOverdue ? "AlertTriangle" : "CalendarClock"} 
+                    size={16} 
+                    style={{ color: paymentStatus.isOverdue ? '#ef4444' : paymentStatus.daysUntilDue <= 7 ? '#f6ad55' : '#68d391' }} 
+                  />
+                  <div>
+                    <div style={{ 
+                      color: paymentStatus.isOverdue ? '#ef4444' : paymentStatus.daysUntilDue <= 7 ? '#f6ad55' : '#68d391', 
+                      fontSize: '12px', 
+                      fontWeight: '600' 
+                    }}>
+                      {paymentStatus.isOverdue 
+                        ? `OVERDUE - ${paymentStatus.daysPastDue} day${paymentStatus.daysPastDue !== 1 ? 's' : ''} past due`
+                        : paymentStatus.daysUntilDue <= 7
+                          ? `Due in ${paymentStatus.daysUntilDue} day${paymentStatus.daysUntilDue !== 1 ? 's' : ''}`
+                          : `Next payment in ${paymentStatus.daysUntilDue} days`
+                      }
+                    </div>
+                    <div style={{ color: '#a0aec0', fontSize: '11px' }}>
+                      {paymentStatus.daysAccrued} day{paymentStatus.daysAccrued !== 1 ? 's' : ''} interest accrued @ {formatCurrency(metrics.dailyInterest)}/day
+                    </div>
+                  </div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ 
+                    color: paymentStatus.isOverdue ? '#ef4444' : '#f6ad55', 
+                    fontSize: '16px', 
+                    fontWeight: '700', 
+                    fontFamily: '"JetBrains Mono", monospace' 
+                  }}>
+                    {formatCurrency(metrics.interestOwedToday)}
+                  </div>
+                  <div style={{ color: '#718096', fontSize: '10px' }}>interest owed today</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '16px', paddingTop: '16px', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Icon name="Calendar" size={12} style={{ color: '#718096' }} />
+              <span style={{ color: '#718096', fontSize: '12px' }}>
+                {metrics.originationDate ? `Originated: ${formatDate(metrics.originationDate)}` : 'Not yet originated'}
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Icon name="Clock" size={12} style={{ color: '#718096' }} />
+              <span style={{ color: '#718096', fontSize: '12px' }}>{loan.termMonths} months</span>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function TransactionModal({ isOpen, onClose, onSave, loan, loans, editingTransaction, onUpdate }) {
+      const [type, setType] = useState('draw');
+      const [amount, setAmount] = useState('');
+      const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+      const [description, setDescription] = useState('');
+      const [selectedLoanId, setSelectedLoanId] = useState(loan?.id || '');
+
+      const isEditing = !!editingTransaction;
+
+      // Reset form when modal opens/closes or when editing transaction changes
+      useEffect(() => {
+        if (editingTransaction) {
+          setType(editingTransaction.type);
+          setAmount(editingTransaction.amount.toString());
+          setDate(editingTransaction.date);
+          setDescription(editingTransaction.description || '');
+          setSelectedLoanId(loan?.id || '');
+        } else {
+          setType('draw');
+          setAmount('');
+          setDate(new Date().toISOString().split('T')[0]);
+          setDescription('');
+          setSelectedLoanId(loan?.id || '');
+        }
+      }, [editingTransaction, loan, isOpen]);
+
+      const currentLoan = loans?.find(l => l.id === selectedLoanId) || loan;
+      const metrics = currentLoan ? calculateLoanMetrics(currentLoan) : null;
+      const selectedType = transactionTypes.find(t => t.value === type);
+
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        if (isEditing) {
+          onUpdate({
+            ...editingTransaction,
+            type,
+            amount: parseFloat(amount),
+            date,
+            description,
+          }, selectedLoanId);
+        } else {
+          onSave({
+            id: `txn-${Date.now()}`,
+            type,
+            amount: parseFloat(amount),
+            date,
+            description,
+          });
+        }
+      };
+
+      if (!isOpen || !loan) return null;
+
+      return (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0,0,0,0.8)',
+          backdropFilter: 'blur(8px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          padding: '20px',
+        }}>
+          <div style={{
+            background: 'linear-gradient(135deg, #1a1f2e 0%, #0f1219 100%)',
+            borderRadius: '20px',
+            padding: '32px',
+            width: '100%',
+            maxWidth: '500px',
+            border: '1px solid rgba(255,255,255,0.1)',
+            boxShadow: '0 25px 50px rgba(0,0,0,0.5)',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+              <h2 style={{ color: '#fff', fontSize: '20px', fontWeight: '600', margin: 0 }}>
+                {isEditing ? 'Edit Transaction' : 'Add Transaction'}
+              </h2>
+              <button
+                onClick={onClose}
+                style={{
+                  background: 'rgba(255,255,255,0.1)',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '8px',
+                  cursor: 'pointer',
+                  color: '#a0aec0',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Icon name="X" size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmit}>
+              {isEditing && loans && loans.length > 1 && (
+                <div style={{ marginBottom: '20px' }}>
+                  <label style={{ color: '#a0aec0', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '8px' }}>
+                    Loan Account
+                  </label>
+                  <select
+                    value={selectedLoanId}
+                    onChange={(e) => setSelectedLoanId(e.target.value)}
+                    style={{
+                      width: '100%',
+                      background: 'rgba(255,255,255,0.05)',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      borderRadius: '10px',
+                      padding: '14px',
+                      color: '#fff',
+                      fontSize: '14px',
+                      outline: 'none',
+                      boxSizing: 'border-box',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {loans.map(l => (
+                      <option key={l.id} value={l.id} style={{ background: '#1a1f2e', color: '#fff' }}>
+                        {l.propertyAddress}
+                      </option>
+                    ))}
+                  </select>
+                  {selectedLoanId !== loan.id && (
+                    <p style={{ color: '#f6ad55', fontSize: '12px', marginTop: '8px' }}>
+                      ⚠ Transaction will be moved to a different loan
+                    </p>
+                  )}
+                </div>
+              )}
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ color: '#a0aec0', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '8px' }}>
+                  Transaction Type
+                </label>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
+                  {transactionTypes.map(t => (
+                    <button
+                      key={t.value}
+                      type="button"
+                      onClick={() => setType(t.value)}
+                      style={{
+                        background: type === t.value ? 'rgba(99, 179, 237, 0.2)' : 'rgba(255,255,255,0.05)',
+                        border: type === t.value ? '1px solid rgba(99, 179, 237, 0.5)' : '1px solid rgba(255,255,255,0.1)',
+                        borderRadius: '10px',
+                        padding: '12px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        color: type === t.value ? '#63b3ed' : '#a0aec0',
+                        transition: 'all 0.2s ease',
+                      }}
+                    >
+                      <Icon name={t.icon} size={16} style={{ color: t.color }} />
+                      <span style={{ fontSize: '13px' }}>{t.label}</span>
+                    </button>
+                  ))}
+                </div>
+                <p style={{ color: '#718096', fontSize: '12px', marginTop: '8px' }}>{selectedType?.description}</p>
+              </div>
+
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ color: '#a0aec0', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '8px' }}>
+                  Amount
+                </label>
+                <div style={{ position: 'relative' }}>
+                  <span style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', color: '#718096' }}>$</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    required
+                    placeholder="0.00"
+                    style={{
+                      width: '100%',
+                      background: 'rgba(255,255,255,0.05)',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      borderRadius: '10px',
+                      padding: '14px 14px 14px 32px',
+                      color: '#fff',
+                      fontSize: '16px',
+                      fontFamily: '"JetBrains Mono", monospace',
+                      outline: 'none',
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                </div>
+                {type === 'draw' && metrics && (
+                  <p style={{ color: '#718096', fontSize: '12px', marginTop: '8px' }}>
+                    Available: {formatCurrency(metrics.remainingAvailable)}
+                  </p>
+                )}
+                {type === 'interest_payment' && metrics && (
+                  <div style={{ color: '#718096', fontSize: '12px', marginTop: '8px' }}>
+                    <div style={{ color: metrics.interestOwedToday > 0 ? '#ef4444' : '#68d391', fontWeight: '600' }}>
+                      Interest owed today: {formatCurrency(metrics.interestOwedToday)}
+                    </div>
+                    <div>Daily rate: {formatCurrency(metrics.dailyInterest)}/day ({metrics.dailyBreakdown?.daysSinceLastPayment || 0} days accrued)</div>
+                  </div>
+                )}
+              </div>
+
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ color: '#a0aec0', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '8px' }}>
+                  Date
+                </label>
+                <input
+                  type="date"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                  required
+                  style={{
+                    width: '100%',
+                    background: 'rgba(255,255,255,0.05)',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    borderRadius: '10px',
+                    padding: '14px',
+                    color: '#fff',
+                    fontSize: '14px',
+                    outline: 'none',
+                    boxSizing: 'border-box',
+                  }}
+                />
+              </div>
+
+              <div style={{ marginBottom: '24px' }}>
+                <label style={{ color: '#a0aec0', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '8px' }}>
+                  Description (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="e.g., Draw 1 - Foundation work"
+                  style={{
+                    width: '100%',
+                    background: 'rgba(255,255,255,0.05)',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    borderRadius: '10px',
+                    padding: '14px',
+                    color: '#fff',
+                    fontSize: '14px',
+                    outline: 'none',
+                    boxSizing: 'border-box',
+                  }}
+                />
+              </div>
+
+              <button
+                type="submit"
+                style={{
+                  width: '100%',
+                  background: 'linear-gradient(135deg, #63b3ed 0%, #4299e1 100%)',
+                  border: 'none',
+                  borderRadius: '10px',
+                  padding: '16px',
+                  color: '#fff',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                }}
+              >
+                {isEditing ? 'Update Transaction' : 'Add Transaction'}
+              </button>
+            </form>
+          </div>
+        </div>
+      );
+    }
+
+    function InterestChart({ data, transactions }) {
+      const containerRef = React.useRef(null);
+      const canvasRef = React.useRef(null);
+      
+      useEffect(() => {
+        const canvas = canvasRef.current;
+        const container = containerRef.current;
+        if (!canvas || !container || !data || data.length === 0) return;
+        
+        // Get actual container size and set canvas to match
+        const rect = container.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        const width = rect.width;
+        const height = rect.height;
+        
+        // Set canvas size accounting for device pixel ratio
+        canvas.width = width * dpr;
+        canvas.height = height * dpr;
+        canvas.style.width = width + 'px';
+        canvas.style.height = height + 'px';
+        
+        const ctx = canvas.getContext('2d');
+        ctx.scale(dpr, dpr);
+        
+        const padding = { top: 20, right: 65, bottom: 45, left: 75 };
+        
+        // Clear canvas
+        ctx.clearRect(0, 0, width, height);
+        
+        // Sample data if too many points
+        let chartData = data;
+        if (data.length > 90) {
+          // Weekly sampling for long periods
+          chartData = data.filter((_, i) => i % 7 === 0 || i === data.length - 1);
+        } else if (data.length > 45) {
+          // Every 3 days for medium periods
+          chartData = data.filter((_, i) => i % 3 === 0 || i === data.length - 1);
+        }
+        
+        if (chartData.length < 2) {
+          chartData = data;
+        }
+        
+        // Find max values
+        const maxBalance = Math.max(...chartData.map(d => d.balance));
+        const maxInterest = Math.max(...chartData.map(d => d.interestOwed), 1);
+        
+        const chartWidth = width - padding.left - padding.right;
+        const chartHeight = height - padding.top - padding.bottom;
+        
+        // Helper function to get x position
+        const getX = (i) => padding.left + (i / Math.max(1, chartData.length - 1)) * chartWidth;
+        
+        // Helper function to get y position for balance
+        const getBalanceY = (balance) => {
+          if (maxBalance === 0) return padding.top + chartHeight;
+          return padding.top + chartHeight - (balance / (maxBalance * 1.1)) * chartHeight;
+        };
+        
+        // Helper function to get y position for interest (separate scale)
+        const getInterestY = (interest) => {
+          if (maxInterest === 0) return padding.top + chartHeight;
+          return padding.top + chartHeight - (interest / (maxInterest * 1.1)) * chartHeight;
+        };
+        
+        // Draw horizontal grid lines
+        ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+        ctx.lineWidth = 1;
+        for (let i = 0; i <= 5; i++) {
+          const y = padding.top + (chartHeight / 5) * i;
+          ctx.beginPath();
+          ctx.moveTo(padding.left, y);
+          ctx.lineTo(width - padding.right, y);
+          ctx.stroke();
+        }
+        
+        // Draw Y-axis labels (Balance - left side)
+        ctx.fillStyle = '#63b3ed';
+        ctx.font = '11px JetBrains Mono, monospace';
+        ctx.textAlign = 'right';
+        for (let i = 0; i <= 4; i++) {
+          const value = (maxBalance * 1.1) - ((maxBalance * 1.1) / 4) * i;
+          const y = padding.top + (chartHeight / 4) * i;
+          if (value >= 1000) {
+            ctx.fillText('$' + (value / 1000).toFixed(0) + 'k', padding.left - 10, y + 4);
+          } else {
+            ctx.fillText('$' + value.toFixed(0), padding.left - 10, y + 4);
+          }
+        }
+        
+        // Draw Y-axis labels (Interest - right side)
+        ctx.fillStyle = '#f6ad55';
+        ctx.textAlign = 'left';
+        for (let i = 0; i <= 4; i++) {
+          const value = (maxInterest * 1.1) - ((maxInterest * 1.1) / 4) * i;
+          const y = padding.top + (chartHeight / 4) * i;
+          if (value >= 1000) {
+            ctx.fillText('$' + (value / 1000).toFixed(1) + 'k', width - padding.right + 10, y + 4);
+          } else {
+            ctx.fillText('$' + value.toFixed(0), width - padding.right + 10, y + 4);
+          }
+        }
+        
+        // Fill area under balance line (stepped)
+        ctx.fillStyle = 'rgba(99, 179, 237, 0.15)';
+        ctx.beginPath();
+        ctx.moveTo(getX(0), padding.top + chartHeight);
+        chartData.forEach((d, i) => {
+          const x = getX(i);
+          const y = getBalanceY(d.balance);
+          if (i === 0) {
+            ctx.lineTo(x, y);
+          } else {
+            const prevY = getBalanceY(chartData[i-1].balance);
+            if (Math.abs(y - prevY) > 2) {
+              ctx.lineTo(x, prevY);
+            }
+            ctx.lineTo(x, y);
+          }
+        });
+        ctx.lineTo(getX(chartData.length - 1), padding.top + chartHeight);
+        ctx.closePath();
+        ctx.fill();
+        
+        // Draw balance line (blue) - stepped for accuracy
+        ctx.strokeStyle = '#63b3ed';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        chartData.forEach((d, i) => {
+          const x = getX(i);
+          const y = getBalanceY(d.balance);
+          if (i === 0) {
+            ctx.moveTo(x, y);
+          } else {
+            // Step pattern for balance changes
+            const prevY = getBalanceY(chartData[i-1].balance);
+            if (Math.abs(y - prevY) > 2) {
+              ctx.lineTo(x, prevY);
+            }
+            ctx.lineTo(x, y);
+          }
+        });
+        ctx.stroke();
+        
+        // Draw interest owed line (orange) — drops on payments
+        ctx.strokeStyle = '#f6ad55';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        chartData.forEach((d, i) => {
+          const x = getX(i);
+          const y = getInterestY(d.interestOwed);
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+        
+        // Draw dots at data points for interest
+        ctx.fillStyle = '#f6ad55';
+        if (chartData.length <= 31) {
+          chartData.forEach((d, i) => {
+            const x = getX(i);
+            const y = getInterestY(d.interestOwed);
+            ctx.beginPath();
+            ctx.arc(x, y, 3, 0, Math.PI * 2);
+            ctx.fill();
+          });
+        }
+        
+        // Draw x-axis labels (dates)
+        ctx.fillStyle = '#718096';
+        ctx.font = '10px Inter, sans-serif';
+        ctx.textAlign = 'center';
+        const labelCount = Math.min(7, chartData.length);
+        const step = Math.max(1, Math.floor((chartData.length - 1) / (labelCount - 1)));
+        
+        for (let i = 0; i < chartData.length; i += step) {
+          const d = chartData[i];
+          const x = getX(i);
+          const dateParts = d.date.split('-');
+          const date = new Date(dateParts[0], dateParts[1] - 1, dateParts[2]);
+          ctx.fillText(
+            date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+            x,
+            height - 8
+          );
+        }
+        // Always show last date
+        if ((chartData.length - 1) % step !== 0) {
+          const d = chartData[chartData.length - 1];
+          const x = getX(chartData.length - 1);
+          const dateParts = d.date.split('-');
+          const date = new Date(dateParts[0], dateParts[1] - 1, dateParts[2]);
+          ctx.fillText(
+            date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+            x,
+            height - 8
+          );
+        }
+        
+        // Draw vertical lines for interest payments
+        const interestPayments = (transactions || []).filter(t => t.type === 'interest_payment');
+        if (interestPayments.length > 0 && chartData.length >= 2) {
+          const startDateMs = parseLocalDate(chartData[0].date).getTime();
+          const endDateMs = parseLocalDate(chartData[chartData.length - 1].date).getTime();
+          const totalMs = endDateMs - startDateMs;
+          
+          interestPayments.forEach(payment => {
+            const paymentMs = parseLocalDate(payment.date).getTime();
+            if (paymentMs >= startDateMs && paymentMs <= endDateMs && totalMs > 0) {
+              const pct = (paymentMs - startDateMs) / totalMs;
+              const x = padding.left + pct * chartWidth;
+              
+              // Dashed vertical line
+              ctx.strokeStyle = 'rgba(72, 187, 120, 0.5)';
+              ctx.lineWidth = 1.5;
+              ctx.setLineDash([4, 4]);
+              ctx.beginPath();
+              ctx.moveTo(x, padding.top);
+              ctx.lineTo(x, padding.top + chartHeight);
+              ctx.stroke();
+              ctx.setLineDash([]);
+              
+              // Small label at top
+              ctx.fillStyle = '#68d391';
+              ctx.font = '9px JetBrains Mono, monospace';
+              ctx.textAlign = 'center';
+              ctx.fillText('$' + (payment.amount / 1000).toFixed(1) + 'k', x, padding.top - 6);
+            }
+          });
+        }
+
+        // Draw axis labels
+        ctx.font = '11px Inter, sans-serif';
+        ctx.fillStyle = '#63b3ed';
+        ctx.textAlign = 'center';
+        ctx.save();
+        ctx.translate(15, padding.top + chartHeight / 2);
+        ctx.rotate(-Math.PI / 2);
+        ctx.fillText('Balance', 0, 0);
+        ctx.restore();
+        
+        ctx.fillStyle = '#f6ad55';
+        ctx.save();
+        ctx.translate(width - 5, padding.top + chartHeight / 2);
+        ctx.rotate(Math.PI / 2);
+        ctx.fillText('Interest', 0, 0);
+        ctx.restore();
+        
+      }, [data]);
+      
+      return (
+        <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'relative' }}>
+          <canvas ref={canvasRef} style={{ display: 'block' }} />
+        </div>
+      );
+    }
+
+    // Shared function to build combined daily portfolio data across all loans
+    function buildPortfolioDailyData(loans) {
+      const allTransactions = [];
+      loans.forEach(loan => {
+        loan.transactions.forEach(t => {
+          allTransactions.push({ ...t, loanId: loan.id, interestRate: loan.interestRate });
+        });
+      });
+
+      if (allTransactions.length === 0) return [];
+
+      allTransactions.sort((a, b) => a.date.localeCompare(b.date));
+
+      const firstDate = allTransactions[0].date;
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      const dailyData = [];
+      let cumulativeDraws = 0;
+      let cumulativeInterestPaid = 0;
+      let cumulativePrincipalPaid = 0;
+      let cumulativeInterestAccrued = 0;
+      let interestOwed = 0;
+
+      const loanBalances = {};
+      loans.forEach(l => { loanBalances[l.id] = 0; });
+
+      const txByDate = {};
+      allTransactions.forEach(t => {
+        if (!txByDate[t.date]) txByDate[t.date] = [];
+        txByDate[t.date].push(t);
+      });
+
+      const currentDate = parseLocalDate(firstDate);
+      while (currentDate <= today) {
+        const dateKey = currentDate.toISOString().split('T')[0];
+
+        const dayTx = txByDate[dateKey] || [];
+        let dayInterestPayment = 0;
+        dayTx.forEach(t => {
+          if (t.type === 'draw') {
+            cumulativeDraws += t.amount;
+            loanBalances[t.loanId] = (loanBalances[t.loanId] || 0) + t.amount;
+          } else if (t.type === 'interest_payment') {
+            cumulativeInterestPaid += t.amount;
+            dayInterestPayment += t.amount;
+          } else if (t.type === 'principal_payment') {
+            cumulativePrincipalPaid += t.amount;
+            loanBalances[t.loanId] = (loanBalances[t.loanId] || 0) - t.amount;
+          }
+        });
+
+        let dailyInterest = 0;
+        loans.forEach(loan => {
+          const balance = loanBalances[loan.id] || 0;
+          const dailyRate = (loan.interestRate / 100) / 365;
+          dailyInterest += balance * dailyRate;
+        });
+        cumulativeInterestAccrued += dailyInterest;
+        interestOwed += dailyInterest;
+
+        // Interest payments reduce what's owed
+        if (dayInterestPayment > 0) {
+          interestOwed = Math.max(0, interestOwed - dayInterestPayment);
+        }
+
+        const totalBalance = Object.values(loanBalances).reduce((s, v) => s + v, 0);
+
+        dailyData.push({
+          date: dateKey,
+          totalBalance,
+          cumulativeDraws,
+          cumulativeInterestPaid,
+          cumulativePrincipalPaid,
+          cumulativeInterestAccrued,
+          interestOwed,
+          dailyInterest,
+          interestPayment: dayInterestPayment,
+        });
+
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
+
+      return dailyData;
+    }
+
+    function PortfolioChart({ loans }) {
+      const containerRef = React.useRef(null);
+      const canvasRef = React.useRef(null);
+
+      useEffect(() => {
+        const canvas = canvasRef.current;
+        const container = containerRef.current;
+        if (!canvas || !container || !loans || loans.length === 0) return;
+
+        const dailyData = buildPortfolioDailyData(loans);
+        if (dailyData.length < 2) return;
+
+        // Gather all transactions for draw/payment markers
+        const allTransactions = [];
+        loans.forEach(loan => {
+          loan.transactions.forEach(t => {
+            allTransactions.push({ ...t, loanId: loan.id });
+          });
+        });
+
+        // Sample if needed
+        let chartData = dailyData;
+        if (dailyData.length > 90) {
+          chartData = dailyData.filter((_, i) => i % 7 === 0 || i === dailyData.length - 1);
+        } else if (dailyData.length > 45) {
+          chartData = dailyData.filter((_, i) => i % 3 === 0 || i === dailyData.length - 1);
+        }
+
+        // Setup canvas
+        const rect = container.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        const width = rect.width;
+        const height = rect.height;
+        canvas.width = width * dpr;
+        canvas.height = height * dpr;
+        canvas.style.width = width + 'px';
+        canvas.style.height = height + 'px';
+        const ctx = canvas.getContext('2d');
+        ctx.scale(dpr, dpr);
+
+        const padding = { top: 20, right: 70, bottom: 45, left: 75 };
+        const chartWidth = width - padding.left - padding.right;
+        const chartHeight = height - padding.top - padding.bottom;
+
+        ctx.clearRect(0, 0, width, height);
+
+        // Max values
+        const maxBalance = Math.max(...chartData.map(d => d.totalBalance)) * 1.1;
+        const maxInterest = Math.max(
+          Math.max(...chartData.map(d => d.interestOwed)),
+          1
+        ) * 1.15;
+
+        const getX = (i) => padding.left + (i / Math.max(1, chartData.length - 1)) * chartWidth;
+        const getBalY = (v) => padding.top + chartHeight - (v / (maxBalance || 1)) * chartHeight;
+        const getIntY = (v) => padding.top + chartHeight - (v / (maxInterest || 1)) * chartHeight;
+
+        // Grid
+        ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+        ctx.lineWidth = 1;
+        for (let i = 0; i <= 5; i++) {
+          const y = padding.top + (chartHeight / 5) * i;
+          ctx.beginPath();
+          ctx.moveTo(padding.left, y);
+          ctx.lineTo(width - padding.right, y);
+          ctx.stroke();
+        }
+
+        // Left axis labels (Balance)
+        ctx.fillStyle = '#63b3ed';
+        ctx.font = '11px JetBrains Mono, monospace';
+        ctx.textAlign = 'right';
+        for (let i = 0; i <= 4; i++) {
+          const value = maxBalance - (maxBalance / 4) * i;
+          const y = padding.top + (chartHeight / 4) * i;
+          ctx.fillText('$' + (value / 1000).toFixed(0) + 'k', padding.left - 10, y + 4);
+        }
+
+        // Right axis labels (Interest)
+        ctx.fillStyle = '#f6ad55';
+        ctx.textAlign = 'left';
+        for (let i = 0; i <= 4; i++) {
+          const value = maxInterest - (maxInterest / 4) * i;
+          const y = padding.top + (chartHeight / 4) * i;
+          if (value >= 1000) {
+            ctx.fillText('$' + (value / 1000).toFixed(1) + 'k', width - padding.right + 10, y + 4);
+          } else {
+            ctx.fillText('$' + value.toFixed(0), width - padding.right + 10, y + 4);
+          }
+        }
+
+        // Fill under balance (stepped)
+        ctx.fillStyle = 'rgba(99, 179, 237, 0.12)';
+        ctx.beginPath();
+        ctx.moveTo(getX(0), padding.top + chartHeight);
+        chartData.forEach((d, i) => {
+          const x = getX(i);
+          const y = getBalY(d.totalBalance);
+          if (i === 0) {
+            ctx.lineTo(x, y);
+          } else {
+            const prevY = getBalY(chartData[i - 1].totalBalance);
+            if (Math.abs(y - prevY) > 2) ctx.lineTo(x, prevY);
+            ctx.lineTo(x, y);
+          }
+        });
+        ctx.lineTo(getX(chartData.length - 1), padding.top + chartHeight);
+        ctx.closePath();
+        ctx.fill();
+
+        // Balance line (blue, stepped)
+        ctx.strokeStyle = '#63b3ed';
+        ctx.lineWidth = 2.5;
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        chartData.forEach((d, i) => {
+          const x = getX(i);
+          const y = getBalY(d.totalBalance);
+          if (i === 0) { ctx.moveTo(x, y); }
+          else {
+            const prevY = getBalY(chartData[i - 1].totalBalance);
+            if (Math.abs(y - prevY) > 2) ctx.lineTo(x, prevY);
+            ctx.lineTo(x, y);
+          }
+        });
+        ctx.stroke();
+
+        // Interest owed (orange) — accrues daily, drops on payments
+        ctx.strokeStyle = '#f6ad55';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        chartData.forEach((d, i) => {
+          const x = getX(i);
+          const y = getIntY(d.interestOwed);
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+
+        // Draw vertical lines for interest payments
+        const interestPayments = allTransactions.filter(t => t.type === 'interest_payment');
+        if (interestPayments.length > 0) {
+          const startMs = parseLocalDate(chartData[0].date).getTime();
+          const endMs = parseLocalDate(chartData[chartData.length - 1].date).getTime();
+          const totalMs = endMs - startMs;
+
+          interestPayments.forEach(payment => {
+            const paymentMs = parseLocalDate(payment.date).getTime();
+            if (paymentMs >= startMs && paymentMs <= endMs && totalMs > 0) {
+              const pct = (paymentMs - startMs) / totalMs;
+              const x = padding.left + pct * chartWidth;
+
+              ctx.strokeStyle = 'rgba(72, 187, 120, 0.4)';
+              ctx.lineWidth = 1.5;
+              ctx.setLineDash([4, 4]);
+              ctx.beginPath();
+              ctx.moveTo(x, padding.top);
+              ctx.lineTo(x, padding.top + chartHeight);
+              ctx.stroke();
+              ctx.setLineDash([]);
+            }
+          });
+        }
+
+        // Draw vertical lines for draws
+        const draws = allTransactions.filter(t => t.type === 'draw');
+        if (draws.length > 0) {
+          const startMs = parseLocalDate(chartData[0].date).getTime();
+          const endMs = parseLocalDate(chartData[chartData.length - 1].date).getTime();
+          const totalMs = endMs - startMs;
+
+          draws.forEach(draw => {
+            const drawMs = parseLocalDate(draw.date).getTime();
+            if (drawMs >= startMs && drawMs <= endMs && totalMs > 0) {
+              const pct = (drawMs - startMs) / totalMs;
+              const x = padding.left + pct * chartWidth;
+
+              ctx.strokeStyle = 'rgba(99, 179, 237, 0.35)';
+              ctx.lineWidth = 1.5;
+              ctx.setLineDash([4, 4]);
+              ctx.beginPath();
+              ctx.moveTo(x, padding.top);
+              ctx.lineTo(x, padding.top + chartHeight);
+              ctx.stroke();
+              ctx.setLineDash([]);
+
+              ctx.fillStyle = '#63b3ed';
+              ctx.font = '9px JetBrains Mono, monospace';
+              ctx.textAlign = 'center';
+              ctx.fillText('+$' + (draw.amount / 1000).toFixed(0) + 'k', x, padding.top + chartHeight + 12);
+            }
+          });
+        }
+
+        // X-axis date labels
+        ctx.fillStyle = '#718096';
+        ctx.font = '10px Inter, sans-serif';
+        ctx.textAlign = 'center';
+        const labelCount = Math.min(7, chartData.length);
+        const step = Math.max(1, Math.floor((chartData.length - 1) / (labelCount - 1)));
+        for (let i = 0; i < chartData.length; i += step) {
+          const d = chartData[i];
+          const x = getX(i);
+          const dp = d.date.split('-');
+          const date = new Date(dp[0], dp[1] - 1, dp[2]);
+          ctx.fillText(date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), x, height - 8);
+        }
+        if ((chartData.length - 1) % step !== 0) {
+          const d = chartData[chartData.length - 1];
+          const x = getX(chartData.length - 1);
+          const dp = d.date.split('-');
+          const date = new Date(dp[0], dp[1] - 1, dp[2]);
+          ctx.fillText(date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), x, height - 8);
+        }
+
+        // Axis labels
+        ctx.font = '11px Inter, sans-serif';
+        ctx.fillStyle = '#63b3ed';
+        ctx.textAlign = 'center';
+        ctx.save();
+        ctx.translate(15, padding.top + chartHeight / 2);
+        ctx.rotate(-Math.PI / 2);
+        ctx.fillText('Balance', 0, 0);
+        ctx.restore();
+
+        ctx.fillStyle = '#f6ad55';
+        ctx.save();
+        ctx.translate(width - 5, padding.top + chartHeight / 2);
+        ctx.rotate(Math.PI / 2);
+        ctx.fillText('Interest', 0, 0);
+        ctx.restore();
+
+      }, [loans]);
+
+      return (
+        <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'relative' }}>
+          <canvas ref={canvasRef} style={{ display: 'block' }} />
+        </div>
+      );
+    }
+
+    function LoanDetail({ loan, loans, onBack, onAddTransaction, onEditTransaction }) {
+      const metrics = calculateLoanMetrics(loan);
+      const paymentStatus = getPaymentStatus(loan, metrics);
+      const sortedTransactions = [...loan.transactions].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+      const statCards = [
+        { label: 'Current Balance', value: formatCurrency(metrics.currentBalance), color: '#63b3ed', icon: 'TrendingUp' },
+        { label: 'Total Drawn', value: formatCurrency(metrics.totalDrawn), color: '#ed8936', icon: 'ArrowUpRight' },
+        { label: 'Available', value: formatCurrency(metrics.remainingAvailable), color: '#68d391', icon: 'DollarSign' },
+        { label: 'Daily Interest', value: formatCurrency(metrics.dailyInterest), color: '#f6ad55', icon: 'Percent' },
+        { 
+          label: 'Interest Owed Today', 
+          value: formatCurrency(metrics.interestOwedToday), 
+          color: paymentStatus.isOverdue ? '#ef4444' : '#68d391', 
+          icon: 'AlertCircle',
+          sublabel: `${paymentStatus.daysAccrued} days accrued`
+        },
+      ];
+
+      return (
+        <div style={{ animation: 'fadeIn 0.3s ease' }}>
+          <button
+            onClick={onBack}
+            style={{
+              background: 'rgba(255,255,255,0.05)',
+              border: '1px solid rgba(255,255,255,0.1)',
+              borderRadius: '8px',
+              padding: '10px 16px',
+              color: '#a0aec0',
+              fontSize: '13px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              marginBottom: '24px',
+            }}
+          >
+            ← Back to Dashboard
+          </button>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '24px', marginBottom: '24px' }}>
+            <div style={{
+              background: 'linear-gradient(135deg, #1a1f2e 0%, #0f1219 100%)',
+              borderRadius: '16px',
+              padding: '24px',
+              border: '1px solid rgba(255,255,255,0.08)',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '20px' }}>
+                <div style={{
+                  width: '48px',
+                  height: '48px',
+                  background: 'linear-gradient(135deg, #63b3ed 0%, #4299e1 100%)',
+                  borderRadius: '12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}>
+                  <Icon name="Building2" size={24} style={{ color: '#fff' }} />
+                </div>
+                <div>
+                  <h1 style={{ color: '#fff', fontSize: '20px', fontWeight: '600', margin: 0 }}>{loan.propertyAddress}</h1>
+                  <p style={{ color: '#718096', fontSize: '13px', margin: 0 }}>Parcel: {loan.parcelNumber} • {loan.county}</p>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '20px' }}>
+                <div>
+                  <h4 style={{ color: '#718096', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>Lender</h4>
+                  <p style={{ color: '#e2e8f0', fontSize: '15px', margin: 0, fontWeight: '500' }}>{loan.lenderName}</p>
+                  <p style={{ color: '#718096', fontSize: '12px', margin: '4px 0 0 0' }}>{loan.lenderAddress}</p>
+                </div>
+                <div>
+                  <h4 style={{ color: '#718096', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>Borrower</h4>
+                  <p style={{ color: '#e2e8f0', fontSize: '15px', margin: 0, fontWeight: '500' }}>{loan.borrowerName}</p>
+                  <p style={{ color: '#718096', fontSize: '12px', margin: '4px 0 0 0' }}>{loan.borrowerContacts.join(', ')}</p>
+                </div>
+              </div>
+            </div>
+
+            <div style={{
+              background: 'linear-gradient(135deg, #1a1f2e 0%, #0f1219 100%)',
+              borderRadius: '16px',
+              padding: '24px',
+              border: '1px solid rgba(255,255,255,0.08)',
+            }}>
+              <h3 style={{ color: '#fff', fontSize: '14px', fontWeight: '600', margin: '0 0 16px 0' }}>Loan Terms</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: '#718096', fontSize: '13px' }}>Origination Date</span>
+                  <span style={{ color: metrics.originationDate ? '#68d391' : '#718096', fontSize: '13px', fontFamily: '"JetBrains Mono", monospace' }}>
+                    {metrics.originationDate ? formatDate(metrics.originationDate) : 'Not yet originated'}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: '#718096', fontSize: '13px' }}>Total Commitment</span>
+                  <span style={{ color: '#fff', fontSize: '13px', fontFamily: '"JetBrains Mono", monospace' }}>{formatCurrency(loan.totalLoanAmount)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: '#718096', fontSize: '13px' }}>Interest Rate</span>
+                  <span style={{ color: '#f6ad55', fontSize: '13px', fontFamily: '"JetBrains Mono", monospace' }}>{loan.interestRate}% APR ({(loan.interestRate / 365).toFixed(4)}%/day)</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: '#718096', fontSize: '13px' }}>Origination Fee</span>
+                  <span style={{ color: '#fff', fontSize: '13px', fontFamily: '"JetBrains Mono", monospace' }}>{loan.originationFeePercent}% ({formatCurrency(loan.originationFee)})</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: '#718096', fontSize: '13px' }}>Term</span>
+                  <span style={{ color: '#fff', fontSize: '13px' }}>{loan.termMonths} months</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: '#718096', fontSize: '13px' }}>Land Value</span>
+                  <span style={{ color: '#fff', fontSize: '13px', fontFamily: '"JetBrains Mono", monospace' }}>{formatCurrency(loan.landValue)}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '16px', marginBottom: '24px' }}>
+            {statCards.map((stat, i) => (
+              <div key={i} style={{
+                background: 'linear-gradient(135deg, #1a1f2e 0%, #0f1219 100%)',
+                borderRadius: '12px',
+                padding: '20px',
+                border: '1px solid rgba(255,255,255,0.08)',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                  <Icon name={stat.icon} size={14} style={{ color: stat.color }} />
+                  <span style={{ color: '#718096', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{stat.label}</span>
+                </div>
+                <div style={{ color: stat.color, fontSize: '22px', fontWeight: '700', fontFamily: '"JetBrains Mono", monospace' }}>
+                  {stat.value}
+                </div>
+                {stat.sublabel && (
+                  <div style={{ color: '#718096', fontSize: '11px', marginTop: '4px' }}>{stat.sublabel}</div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Interest Accrual Chart */}
+          {metrics.dailyBreakdown?.days?.length > 1 && (
+            <div style={{
+              background: 'linear-gradient(135deg, #1a1f2e 0%, #0f1219 100%)',
+              borderRadius: '16px',
+              padding: '24px',
+              border: '1px solid rgba(255,255,255,0.08)',
+              marginBottom: '24px',
+            }}>
+              <h3 style={{ color: '#fff', fontSize: '16px', fontWeight: '600', margin: '0 0 16px 0' }}>
+                Balance & Interest Accrual
+              </h3>
+              <div style={{ height: '280px', position: 'relative' }}>
+                <InterestChart data={metrics.dailyBreakdown.days} transactions={loan.transactions} />
+              </div>
+              <div style={{ display: 'flex', gap: '24px', marginTop: '12px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{ width: '16px', height: '3px', borderRadius: '2px', background: '#63b3ed' }} />
+                  <span style={{ color: '#718096', fontSize: '12px' }}>Principal Balance (left axis)</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{ width: '16px', height: '3px', borderRadius: '2px', background: '#f6ad55' }} />
+                  <span style={{ color: '#718096', fontSize: '12px' }}>Interest Owed (right axis)</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{ width: '16px', height: '0px', borderTop: '2px dashed #68d391' }} />
+                  <span style={{ color: '#718096', fontSize: '12px' }}>Interest Payment</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+            <div style={{
+              background: 'linear-gradient(135deg, #1a1f2e 0%, #0f1219 100%)',
+              borderRadius: '16px',
+              padding: '24px',
+              border: '1px solid rgba(255,255,255,0.08)',
+            }}>
+              <h3 style={{ color: '#fff', fontSize: '16px', fontWeight: '600', margin: '0 0 20px 0' }}>Draw Schedule</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {loan.drawSchedule.map((draw, i) => {
+                  // Calculate cumulative amount needed for this draw to be complete
+                  const cumulativeAmount = metrics.drawThresholds[i];
+                  const isCompleted = metrics.totalDrawn >= cumulativeAmount;
+                  const isPartial = !isCompleted && i > 0 && metrics.totalDrawn > metrics.drawThresholds[i - 1];
+                  const isFirstPartial = !isCompleted && i === 0 && metrics.totalDrawn > 0 && metrics.totalDrawn < cumulativeAmount;
+                  return (
+                    <div key={i} style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '12px',
+                      padding: '12px',
+                      background: isCompleted ? 'rgba(72, 187, 120, 0.1)' : 'rgba(255,255,255,0.03)',
+                      borderRadius: '10px',
+                      border: isCompleted ? '1px solid rgba(72, 187, 120, 0.3)' : '1px solid rgba(255,255,255,0.05)',
+                    }}>
+                      <div style={{
+                        width: '28px',
+                        height: '28px',
+                        borderRadius: '50%',
+                        background: isCompleted ? '#48bb78' : 'rgba(255,255,255,0.1)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: isCompleted ? '#fff' : '#718096',
+                        fontSize: '12px',
+                        fontWeight: '600',
+                      }}>
+                        {isCompleted ? '✓' : draw.draw}
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ color: '#e2e8f0', fontSize: '14px', fontWeight: '500' }}>{draw.timing}</div>
+                        <div style={{ color: '#718096', fontSize: '12px' }}>{draw.condition}</div>
+                      </div>
+                      <div style={{ color: isCompleted ? '#68d391' : '#a0aec0', fontSize: '14px', fontWeight: '600', fontFamily: '"JetBrains Mono", monospace' }}>
+                        {formatCurrency(draw.amount)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div style={{
+              background: 'linear-gradient(135deg, #1a1f2e 0%, #0f1219 100%)',
+              borderRadius: '16px',
+              padding: '24px',
+              border: '1px solid rgba(255,255,255,0.08)',
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                <h3 style={{ color: '#fff', fontSize: '16px', fontWeight: '600', margin: 0 }}>Transactions</h3>
+                <button
+                  onClick={onAddTransaction}
+                  style={{
+                    background: 'linear-gradient(135deg, #63b3ed 0%, #4299e1 100%)',
+                    border: 'none',
+                    borderRadius: '8px',
+                    padding: '8px 16px',
+                    color: '#fff',
+                    fontSize: '13px',
+                    fontWeight: '500',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                >
+                  <Icon name="Plus" size={14} /> Add
+                </button>
+              </div>
+
+              {sortedTransactions.length === 0 ? (
+                <div style={{
+                  textAlign: 'center',
+                  padding: '40px 20px',
+                  color: '#718096',
+                }}>
+                  <Icon name="AlertCircle" size={32} style={{ marginBottom: '12px', opacity: 0.5 }} />
+                  <p style={{ margin: 0 }}>No transactions yet</p>
+                  <p style={{ margin: '8px 0 0 0', fontSize: '13px' }}>Add a transaction to get started</p>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '400px', overflowY: 'auto' }}>
+                  {sortedTransactions.map(txn => {
+                    const txnType = transactionTypes.find(t => t.value === txn.type);
+                    const isInflow = ['interest_payment', 'origination_fee', 'principal_payment'].includes(txn.type);
+                    return (
+                      <div key={txn.id} style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '12px',
+                        padding: '12px',
+                        background: 'rgba(255,255,255,0.03)',
+                        borderRadius: '10px',
+                      }}>
+                        <div style={{
+                          width: '36px',
+                          height: '36px',
+                          borderRadius: '10px',
+                          background: `${txnType?.color}20`,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}>
+                          <Icon name={txnType?.icon || 'DollarSign'} size={18} style={{ color: txnType?.color }} />
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ color: '#e2e8f0', fontSize: '14px', fontWeight: '500' }}>{txnType?.label}</div>
+                          <div style={{ color: '#718096', fontSize: '12px' }}>
+                            {formatDate(txn.date)}{txn.description ? ` • ${txn.description}` : ''}
+                          </div>
+                        </div>
+                        <div style={{
+                          color: isInflow ? '#68d391' : '#ef4444',
+                          fontSize: '14px',
+                          fontWeight: '600',
+                          fontFamily: '"JetBrains Mono", monospace',
+                          marginRight: '8px',
+                        }}>
+                          {isInflow ? '+' : '-'}{formatCurrency(txn.amount)}
+                        </div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onEditTransaction(txn);
+                          }}
+                          style={{
+                            background: 'rgba(255,255,255,0.05)',
+                            border: '1px solid rgba(255,255,255,0.1)',
+                            borderRadius: '6px',
+                            padding: '6px 10px',
+                            color: '#a0aec0',
+                            fontSize: '12px',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            transition: 'all 0.2s ease',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = 'rgba(99, 179, 237, 0.2)';
+                            e.currentTarget.style.borderColor = 'rgba(99, 179, 237, 0.4)';
+                            e.currentTarget.style.color = '#63b3ed';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
+                            e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)';
+                            e.currentTarget.style.color = '#a0aec0';
+                          }}
+                        >
+                          <Icon name="Pencil" size={12} />
+                          Edit
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function ImportModal({ isOpen, onClose, onImport }) {
+      const [jsonText, setJsonText] = useState('');
+      const fileInputRef = React.useRef(null);
+
+      const handleFileSelect = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            setJsonText(e.target.result);
+          };
+          reader.readAsText(file);
+        }
+      };
+
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        onImport(jsonText);
+      };
+
+      if (!isOpen) return null;
+
+      return (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0,0,0,0.8)',
+          backdropFilter: 'blur(8px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          padding: '20px',
+        }}>
+          <div style={{
+            background: 'linear-gradient(135deg, #1a1f2e 0%, #0f1219 100%)',
+            borderRadius: '20px',
+            padding: '32px',
+            width: '100%',
+            maxWidth: '500px',
+            border: '1px solid rgba(255,255,255,0.1)',
+            boxShadow: '0 25px 50px rgba(0,0,0,0.5)',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+              <h2 style={{ color: '#fff', fontSize: '20px', fontWeight: '600', margin: 0 }}>Import Data</h2>
+              <button onClick={onClose} style={{
+                background: 'rgba(255,255,255,0.1)',
+                border: 'none',
+                borderRadius: '8px',
+                padding: '8px',
+                cursor: 'pointer',
+                color: '#a0aec0',
+              }}>
+                <Icon name="X" size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmit}>
+              <div style={{ marginBottom: '20px' }}>
+                <input
+                  type="file"
+                  accept=".json"
+                  ref={fileInputRef}
+                  onChange={handleFileSelect}
+                  style={{ display: 'none' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  style={{
+                    width: '100%',
+                    background: 'rgba(255,255,255,0.05)',
+                    border: '2px dashed rgba(255,255,255,0.2)',
+                    borderRadius: '10px',
+                    padding: '24px',
+                    color: '#a0aec0',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    gap: '8px',
+                  }}
+                >
+                  <Icon name="Upload" size={24} />
+                  <span>Click to select JSON file</span>
+                </button>
+              </div>
+
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ color: '#a0aec0', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '8px' }}>
+                  Or paste JSON data
+                </label>
+                <textarea
+                  value={jsonText}
+                  onChange={(e) => setJsonText(e.target.value)}
+                  placeholder='[{"id": "loan-1", ...}]'
+                  style={{
+                    width: '100%',
+                    height: '150px',
+                    background: 'rgba(255,255,255,0.05)',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    borderRadius: '10px',
+                    padding: '14px',
+                    color: '#fff',
+                    fontSize: '13px',
+                    fontFamily: '"JetBrains Mono", monospace',
+                    outline: 'none',
+                    resize: 'vertical',
+                    boxSizing: 'border-box',
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <button type="button" onClick={onClose} style={{
+                  flex: 1,
+                  background: 'rgba(255,255,255,0.1)',
+                  border: 'none',
+                  borderRadius: '10px',
+                  padding: '14px',
+                  color: '#a0aec0',
+                  cursor: 'pointer',
+                }}>
+                  Cancel
+                </button>
+                <button type="submit" disabled={!jsonText.trim()} style={{
+                  flex: 1,
+                  background: jsonText.trim() ? 'linear-gradient(135deg, #63b3ed 0%, #4299e1 100%)' : 'rgba(255,255,255,0.1)',
+                  border: 'none',
+                  borderRadius: '10px',
+                  padding: '14px',
+                  color: '#fff',
+                  cursor: jsonText.trim() ? 'pointer' : 'not-allowed',
+                  fontWeight: '600',
+                }}>
+                  Import
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      );
+    }
+
+    function NewLoanModal({ isOpen, onClose, onSave }) {
+      const [formData, setFormData] = useState({
+        lenderName: '',
+        lenderAddress: '',
+        borrowerName: '',
+        borrowerAddress: '',
+        borrowerContacts: '',
+        propertyAddress: '',
+        parcelNumber: '',
+        county: '',
+        totalLoanAmount: '',
+        interestRate: '9.0',
+        originationFeePercent: '1.0',
+        landValue: '',
+        acreage: '',
+        termMonths: '6-9',
+      });
+      const [contractText, setContractText] = useState('');
+      const [showContractParser, setShowContractParser] = useState(false);
+
+      const parseContract = () => {
+        const text = contractText;
+        
+        // Try to extract fields from contract text
+        const extractField = (patterns) => {
+          for (const pattern of patterns) {
+            const match = text.match(pattern);
+            if (match) return match[1].trim();
+          }
+          return '';
+        };
+
+        const newData = { ...formData };
+        
+        // Lender
+        const lenderMatch = text.match(/Lender[:\s]*\n*([^\n]+)/i);
+        if (lenderMatch) newData.lenderName = lenderMatch[1].trim();
+        
+        // Lender address
+        const lenderAddrMatch = text.match(/Lender[:\s]*\n*[^\n]+\n+(\d+[^\n]+(?:\n[^\n]+)?(?:AZ|Arizona)[^\n]*\d{5})/i);
+        if (lenderAddrMatch) newData.lenderAddress = lenderAddrMatch[1].replace(/\n/g, ', ').trim();
+
+        // Borrower
+        const borrowerMatch = text.match(/Borrower[:\s]*\n*([^\n]+(?:LLC|Inc|Corp)?)/i);
+        if (borrowerMatch) newData.borrowerName = borrowerMatch[1].trim();
+
+        // Borrower address
+        const borrowerAddrMatch = text.match(/Borrower[:\s]*\n*[^\n]+\n+(\d+[^\n]+(?:\n[^\n]+)?(?:AZ|Arizona)[^\n]*\d{5})/i);
+        if (borrowerAddrMatch) newData.borrowerAddress = borrowerAddrMatch[1].replace(/\n/g, ', ').trim();
+
+        // Attn/Contacts
+        const attnMatch = text.match(/Attn[:\s]*([^\n]+)/i);
+        if (attnMatch) newData.borrowerContacts = attnMatch[1].trim();
+
+        // Property Address
+        const propAddrMatch = text.match(/Address[:\s]*(\d+[^\n]+(?:Ln|Lane|St|Street|Dr|Drive|Ave|Avenue|Rd|Road)[^\n]*)/i);
+        if (propAddrMatch) newData.propertyAddress = propAddrMatch[1].trim();
+
+        // Parcel Number
+        const parcelMatch = text.match(/(?:Parcel|Legal Parcel)[^\(]*\(([^\)]+)\)/i);
+        if (parcelMatch) newData.parcelNumber = parcelMatch[1].trim();
+
+        // County
+        const countyMatch = text.match(/([^\s]+\s+County,?\s*(?:AZ|Arizona))/i);
+        if (countyMatch) newData.county = countyMatch[1].trim();
+
+        // Loan Amount
+        const amountMatch = text.match(/\$\s*([\d,]+)\s*(?:USD|dollars)?.*(?:principal|loan)/i);
+        if (amountMatch) newData.totalLoanAmount = amountMatch[1].replace(/,/g, '');
+
+        // Interest Rate
+        const rateMatch = text.match(/([\d.]+)\s*%\s*(?:annual|APR)/i);
+        if (rateMatch) newData.interestRate = rateMatch[1];
+
+        // Origination Fee
+        const origFeeMatch = text.match(/Origination Fee[:\s]*([\d.]+)\s*%/i);
+        if (origFeeMatch) newData.originationFeePercent = origFeeMatch[1];
+
+        // Land Value
+        const landMatch = text.match(/(?:land|property).*value.*\$\s*([\d,]+)/i);
+        if (landMatch) newData.landValue = landMatch[1].replace(/,/g, '');
+
+        // Acreage
+        const acreMatch = text.match(/([\d.]+)\s*acres?/i);
+        if (acreMatch) newData.acreage = acreMatch[1];
+
+        // Term
+        const termMatch = text.match(/(?:term|period).*?(\d+(?:\s*(?:to|-)\s*\d+)?)\s*months?/i);
+        if (termMatch) newData.termMonths = termMatch[1].replace(/\s+/g, '');
+
+        setFormData(newData);
+        setShowContractParser(false);
+      };
+
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        const originationFee = (parseFloat(formData.totalLoanAmount) || 0) * (parseFloat(formData.originationFeePercent) || 0) / 100;
+        
+        onSave({
+          ...formData,
+          borrowerContacts: formData.borrowerContacts.split(',').map(s => s.trim()).filter(Boolean),
+          totalLoanAmount: parseFloat(formData.totalLoanAmount) || 0,
+          interestRate: parseFloat(formData.interestRate) || 0,
+          originationFeePercent: parseFloat(formData.originationFeePercent) || 0,
+          originationFee,
+          landValue: parseFloat(formData.landValue) || 0,
+          acreage: parseFloat(formData.acreage) || 0,
+          drawSchedule: [
+            { draw: 1, timing: 'At closing', amount: 150000, condition: 'Execution of loan docs; lien recorded' },
+            { draw: 2, timing: '~30-45 days after Draw 1', amount: 150000, condition: 'Verified progress' },
+            { draw: 3, timing: '~60-75 days after Draw 2', amount: 150000, condition: 'Verified progress' },
+            { draw: 4, timing: '~90+ days after Draw 3', amount: 175000, condition: 'Verified progress' },
+          ],
+          transactions: [],
+        });
+
+        // Reset form
+        setFormData({
+          lenderName: '',
+          lenderAddress: '',
+          borrowerName: '',
+          borrowerAddress: '',
+          borrowerContacts: '',
+          propertyAddress: '',
+          parcelNumber: '',
+          county: '',
+          totalLoanAmount: '',
+          interestRate: '9.0',
+          originationFeePercent: '1.0',
+          landValue: '',
+          acreage: '',
+          termMonths: '6-9',
+        });
+      };
+
+      const updateField = (field, value) => {
+        setFormData(prev => ({ ...prev, [field]: value }));
+      };
+
+      if (!isOpen) return null;
+
+      const inputStyle = {
+        width: '100%',
+        background: 'rgba(255,255,255,0.05)',
+        border: '1px solid rgba(255,255,255,0.1)',
+        borderRadius: '8px',
+        padding: '10px 12px',
+        color: '#fff',
+        fontSize: '14px',
+        outline: 'none',
+        boxSizing: 'border-box',
+      };
+
+      const labelStyle = {
+        color: '#a0aec0',
+        fontSize: '11px',
+        textTransform: 'uppercase',
+        letterSpacing: '0.5px',
+        display: 'block',
+        marginBottom: '6px',
+      };
+
+      return (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0,0,0,0.8)',
+          backdropFilter: 'blur(8px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          padding: '20px',
+          overflowY: 'auto',
+        }}>
+          <div style={{
+            background: 'linear-gradient(135deg, #1a1f2e 0%, #0f1219 100%)',
+            borderRadius: '20px',
+            padding: '32px',
+            width: '100%',
+            maxWidth: '700px',
+            border: '1px solid rgba(255,255,255,0.1)',
+            boxShadow: '0 25px 50px rgba(0,0,0,0.5)',
+            maxHeight: '90vh',
+            overflowY: 'auto',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+              <h2 style={{ color: '#fff', fontSize: '20px', fontWeight: '600', margin: 0 }}>
+                {showContractParser ? 'Parse Contract' : 'New Loan'}
+              </h2>
+              <button onClick={onClose} style={{
+                background: 'rgba(255,255,255,0.1)',
+                border: 'none',
+                borderRadius: '8px',
+                padding: '8px',
+                cursor: 'pointer',
+                color: '#a0aec0',
+              }}>
+                <Icon name="X" size={18} />
+              </button>
+            </div>
+
+            {showContractParser ? (
+              <div>
+                <p style={{ color: '#718096', fontSize: '13px', marginBottom: '16px' }}>
+                  Paste the contract text below and click "Extract Details" to auto-fill the form.
+                </p>
+                <textarea
+                  value={contractText}
+                  onChange={(e) => setContractText(e.target.value)}
+                  placeholder="Paste contract text here..."
+                  style={{
+                    ...inputStyle,
+                    height: '300px',
+                    fontFamily: '"JetBrains Mono", monospace',
+                    fontSize: '12px',
+                    resize: 'vertical',
+                  }}
+                />
+                <div style={{ display: 'flex', gap: '12px', marginTop: '16px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowContractParser(false)}
+                    style={{
+                      flex: 1,
+                      background: 'rgba(255,255,255,0.1)',
+                      border: 'none',
+                      borderRadius: '10px',
+                      padding: '14px',
+                      color: '#a0aec0',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Back to Form
+                  </button>
+                  <button
+                    type="button"
+                    onClick={parseContract}
+                    disabled={!contractText.trim()}
+                    style={{
+                      flex: 1,
+                      background: contractText.trim() ? 'linear-gradient(135deg, #63b3ed 0%, #4299e1 100%)' : 'rgba(255,255,255,0.1)',
+                      border: 'none',
+                      borderRadius: '10px',
+                      padding: '14px',
+                      color: '#fff',
+                      cursor: contractText.trim() ? 'pointer' : 'not-allowed',
+                      fontWeight: '600',
+                    }}
+                  >
+                    Extract Details
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={handleSubmit}>
+                <button
+                  type="button"
+                  onClick={() => setShowContractParser(true)}
+                  style={{
+                    width: '100%',
+                    background: 'rgba(99, 179, 237, 0.1)',
+                    border: '1px dashed rgba(99, 179, 237, 0.4)',
+                    borderRadius: '10px',
+                    padding: '16px',
+                    color: '#63b3ed',
+                    cursor: 'pointer',
+                    marginBottom: '24px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
+                  }}
+                >
+                  <Icon name="FileText" size={18} />
+                  Paste Contract to Auto-Fill
+                </button>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '20px' }}>
+                  <div>
+                    <h3 style={{ color: '#fff', fontSize: '14px', fontWeight: '600', marginBottom: '12px' }}>Lender</h3>
+                    <div style={{ marginBottom: '12px' }}>
+                      <label style={labelStyle}>Name</label>
+                      <input style={inputStyle} value={formData.lenderName} onChange={e => updateField('lenderName', e.target.value)} required />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Address</label>
+                      <input style={inputStyle} value={formData.lenderAddress} onChange={e => updateField('lenderAddress', e.target.value)} />
+                    </div>
+                  </div>
+                  <div>
+                    <h3 style={{ color: '#fff', fontSize: '14px', fontWeight: '600', marginBottom: '12px' }}>Borrower</h3>
+                    <div style={{ marginBottom: '12px' }}>
+                      <label style={labelStyle}>Name</label>
+                      <input style={inputStyle} value={formData.borrowerName} onChange={e => updateField('borrowerName', e.target.value)} required />
+                    </div>
+                    <div style={{ marginBottom: '12px' }}>
+                      <label style={labelStyle}>Address</label>
+                      <input style={inputStyle} value={formData.borrowerAddress} onChange={e => updateField('borrowerAddress', e.target.value)} />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Contacts (comma-separated)</label>
+                      <input style={inputStyle} value={formData.borrowerContacts} onChange={e => updateField('borrowerContacts', e.target.value)} placeholder="John Doe, Jane Smith" />
+                    </div>
+                  </div>
+                </div>
+
+                <h3 style={{ color: '#fff', fontSize: '14px', fontWeight: '600', marginBottom: '12px' }}>Property</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '12px', marginBottom: '20px' }}>
+                  <div>
+                    <label style={labelStyle}>Property Address</label>
+                    <input style={inputStyle} value={formData.propertyAddress} onChange={e => updateField('propertyAddress', e.target.value)} required />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Parcel Number</label>
+                    <input style={inputStyle} value={formData.parcelNumber} onChange={e => updateField('parcelNumber', e.target.value)} />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>County</label>
+                    <input style={inputStyle} value={formData.county} onChange={e => updateField('county', e.target.value)} />
+                  </div>
+                </div>
+
+                <h3 style={{ color: '#fff', fontSize: '14px', fontWeight: '600', marginBottom: '12px' }}>Loan Terms</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '20px' }}>
+                  <div>
+                    <label style={labelStyle}>Total Loan Amount ($)</label>
+                    <input style={inputStyle} type="number" value={formData.totalLoanAmount} onChange={e => updateField('totalLoanAmount', e.target.value)} required />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Interest Rate (%)</label>
+                    <input style={inputStyle} type="number" step="0.1" value={formData.interestRate} onChange={e => updateField('interestRate', e.target.value)} required />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Origination Fee (%)</label>
+                    <input style={inputStyle} type="number" step="0.1" value={formData.originationFeePercent} onChange={e => updateField('originationFeePercent', e.target.value)} />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Land Value ($)</label>
+                    <input style={inputStyle} type="number" value={formData.landValue} onChange={e => updateField('landValue', e.target.value)} />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Acreage</label>
+                    <input style={inputStyle} type="number" step="0.01" value={formData.acreage} onChange={e => updateField('acreage', e.target.value)} />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Term (months)</label>
+                    <input style={inputStyle} value={formData.termMonths} onChange={e => updateField('termMonths', e.target.value)} placeholder="6-9" />
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '12px' }}>
+                  <button type="button" onClick={onClose} style={{
+                    flex: 1,
+                    background: 'rgba(255,255,255,0.1)',
+                    border: 'none',
+                    borderRadius: '10px',
+                    padding: '14px',
+                    color: '#a0aec0',
+                    cursor: 'pointer',
+                  }}>
+                    Cancel
+                  </button>
+                  <button type="submit" style={{
+                    flex: 1,
+                    background: 'linear-gradient(135deg, #63b3ed 0%, #4299e1 100%)',
+                    border: 'none',
+                    borderRadius: '10px',
+                    padding: '14px',
+                    color: '#fff',
+                    cursor: 'pointer',
+                    fontWeight: '600',
+                  }}>
+                    Create Loan
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================
+    // LOGIN SCREEN
+    // ============================================
+    function LoginScreen({ onAuth }) {
+      const [email, setEmail] = useState('');
+      const [password, setPassword] = useState('');
+      const [isSignUp, setIsSignUp] = useState(false);
+      const [error, setError] = useState('');
+      const [loading, setLoading] = useState(false);
+      const [message, setMessage] = useState('');
+
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        setError('');
+        setMessage('');
+        setLoading(true);
+
+        try {
+          if (isSignUp) {
+            const { data, error: signUpError } = await supabaseClient.auth.signUp({
+              email,
+              password,
+            });
+            if (signUpError) throw signUpError;
+            if (data.user && !data.session) {
+              setMessage('Check your email for a confirmation link.');
+            }
+          } else {
+            const { error: signInError } = await supabaseClient.auth.signInWithPassword({
+              email,
+              password,
+            });
+            if (signInError) throw signInError;
+          }
+        } catch (err) {
+          setError(err.message);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      return (
+        <div style={{
+          minHeight: '100vh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '20px',
+        }}>
+          <div style={{
+            background: 'linear-gradient(135deg, #1a1f2e 0%, #0f1219 100%)',
+            borderRadius: '16px',
+            padding: '40px',
+            border: '1px solid rgba(255,255,255,0.08)',
+            width: '100%',
+            maxWidth: '400px',
+          }}>
+            <div style={{ textAlign: 'center', marginBottom: '32px' }}>
+              <div style={{
+                width: '48px',
+                height: '48px',
+                background: 'linear-gradient(135deg, #63b3ed 0%, #4299e1 100%)',
+                borderRadius: '12px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                margin: '0 auto 16px',
+              }}>
+                <Icon name="DollarSign" size={26} style={{ color: '#fff' }} />
+              </div>
+              <h1 style={{ color: '#fff', fontSize: '22px', fontWeight: '700', margin: '0 0 4px 0' }}>
+                Hard Money Loan Tracker
+              </h1>
+              <p style={{ color: '#718096', fontSize: '14px', margin: 0 }}>
+                {isSignUp ? 'Create your account' : 'Sign in to your account'}
+              </p>
+            </div>
+
+            <form onSubmit={handleSubmit}>
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', color: '#a0aec0', fontSize: '13px', marginBottom: '6px' }}>
+                  Email
+                </label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    background: 'rgba(255,255,255,0.05)',
+                    border: '1px solid rgba(255,255,255,0.15)',
+                    borderRadius: '8px',
+                    color: '#e2e8f0',
+                    fontSize: '14px',
+                    outline: 'none',
+                    boxSizing: 'border-box',
+                  }}
+                  placeholder="you@example.com"
+                />
+              </div>
+
+              <div style={{ marginBottom: '24px' }}>
+                <label style={{ display: 'block', color: '#a0aec0', fontSize: '13px', marginBottom: '6px' }}>
+                  Password
+                </label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  minLength={6}
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    background: 'rgba(255,255,255,0.05)',
+                    border: '1px solid rgba(255,255,255,0.15)',
+                    borderRadius: '8px',
+                    color: '#e2e8f0',
+                    fontSize: '14px',
+                    outline: 'none',
+                    boxSizing: 'border-box',
+                  }}
+                  placeholder="Min 6 characters"
+                />
+              </div>
+
+              {error && (
+                <div style={{
+                  background: 'rgba(239, 68, 68, 0.1)',
+                  border: '1px solid rgba(239, 68, 68, 0.3)',
+                  borderRadius: '8px',
+                  padding: '10px 12px',
+                  marginBottom: '16px',
+                  color: '#ef4444',
+                  fontSize: '13px',
+                }}>
+                  {error}
+                </div>
+              )}
+
+              {message && (
+                <div style={{
+                  background: 'rgba(104, 211, 145, 0.1)',
+                  border: '1px solid rgba(104, 211, 145, 0.3)',
+                  borderRadius: '8px',
+                  padding: '10px 12px',
+                  marginBottom: '16px',
+                  color: '#68d391',
+                  fontSize: '13px',
+                }}>
+                  {message}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading}
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  background: loading
+                    ? 'rgba(99, 179, 237, 0.5)'
+                    : 'linear-gradient(135deg, #63b3ed 0%, #4299e1 100%)',
+                  border: 'none',
+                  borderRadius: '8px',
+                  color: '#fff',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  cursor: loading ? 'not-allowed' : 'pointer',
+                  marginBottom: '16px',
+                }}
+              >
+                {loading ? 'Please wait...' : (isSignUp ? 'Create Account' : 'Sign In')}
+              </button>
+            </form>
+
+            <div style={{ textAlign: 'center' }}>
+              <button
+                onClick={() => { setIsSignUp(!isSignUp); setError(''); setMessage(''); }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#63b3ed',
+                  fontSize: '13px',
+                  cursor: 'pointer',
+                  textDecoration: 'underline',
+                }}
+              >
+                {isSignUp ? 'Already have an account? Sign in' : "Don't have an account? Sign up"}
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================
+    // APP WRAPPER (auth gating)
+    // ============================================
+    function App() {
+      const [session, setSession] = useState(null);
+      const [authLoading, setAuthLoading] = useState(true);
+
+      useEffect(() => {
+        supabaseClient.auth.getSession().then(({ data: { session } }) => {
+          setSession(session);
+          setAuthLoading(false);
+        });
+
+        const { data: { subscription } } = supabaseClient.auth.onAuthStateChange(
+          (_event, session) => {
+            setSession(session);
+          }
+        );
+
+        return () => subscription.unsubscribe();
+      }, []);
+
+      const handleLogout = async () => {
+        await supabaseClient.auth.signOut();
+      };
+
+      if (authLoading) {
+        return (
+          <div style={{
+            minHeight: '100vh',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#a0aec0',
+            fontSize: '16px',
+          }}>
+            Loading...
+          </div>
+        );
+      }
+
+      if (!session) {
+        return <LoginScreen />;
+      }
+
+      return <LoanTracker session={session} onLogout={handleLogout} />;
+    }
+
+    // ============================================
+    // MAIN APPLICATION
+    // ============================================
+    function LoanTracker({ session, onLogout }) {
+      const [loans, setLoans] = useState([]);
+      const [dataLoading, setDataLoading] = useState(true);
+      const [dataError, setDataError] = useState(null);
+      const [selectedLoan, setSelectedLoan] = useState(null);
+      const [showTransactionModal, setShowTransactionModal] = useState(false);
+      const [editingTransaction, setEditingTransaction] = useState(null);
+      const [showNewLoanModal, setShowNewLoanModal] = useState(false);
+      const [showImportModal, setShowImportModal] = useState(false);
+      const [showDailyTable, setShowDailyTable] = useState(false);
+
+      // Load loans and transactions from Supabase
+      const loadLoans = async () => {
+        try {
+          setDataLoading(true);
+          setDataError(null);
+
+          const { data: loansData, error: loansError } = await supabaseClient
+            .from('loans')
+            .select('*')
+            .order('created_at', { ascending: true });
+
+          if (loansError) throw loansError;
+
+          const { data: txnData, error: txnError } = await supabaseClient
+            .from('transactions')
+            .select('*')
+            .order('date', { ascending: true });
+
+          if (txnError) throw txnError;
+
+          const loansWithTransactions = loansData.map(row => {
+            const loan = rowToLoan(row);
+            loan.transactions = txnData
+              .filter(t => t.loan_id === row.id)
+              .map(t => rowToTransaction(t));
+            return loan;
+          });
+
+          setLoans(loansWithTransactions);
+        } catch (err) {
+          setDataError(err.message);
+          console.error('Failed to load loans:', err);
+        } finally {
+          setDataLoading(false);
+        }
+      };
+
+      useEffect(() => {
+        loadLoans();
+      }, []);
+
+      // Export data to JSON file
+      const handleExportData = () => {
+        const dataStr = JSON.stringify(loans, null, 2);
+        const blob = new Blob([dataStr], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `loan-tracker-data-${new Date().toISOString().split('T')[0]}.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      };
+
+      // Import data from JSON file
+      const handleImportData = async (jsonData) => {
+        try {
+          const parsed = JSON.parse(jsonData);
+          if (!Array.isArray(parsed)) {
+            alert('Invalid data format. Expected an array of loans.');
+            return;
+          }
+
+          // Delete existing data for this user
+          await supabaseClient.from('transactions').delete().neq('id', '');
+          await supabaseClient.from('loans').delete().neq('id', '');
+
+          // Insert all loans
+          const loanRows = parsed.map(loan => loanToRow(
+            { ...loan, id: loan.id || `loan-${Date.now()}-${Math.random().toString(36).slice(2)}` },
+            session.user.id
+          ));
+
+          if (loanRows.length > 0) {
+            const { error: loanError } = await supabaseClient.from('loans').insert(loanRows);
+            if (loanError) throw loanError;
+          }
+
+          // Insert all transactions
+          const txnRows = parsed.flatMap(loan =>
+            (loan.transactions || []).map(t => ({
+              id: t.id || `txn-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+              loan_id: loan.id,
+              user_id: session.user.id,
+              type: t.type,
+              amount: t.amount,
+              date: t.date,
+              description: t.description || '',
+            }))
+          );
+
+          if (txnRows.length > 0) {
+            const { error: txnError } = await supabaseClient.from('transactions').insert(txnRows);
+            if (txnError) throw txnError;
+          }
+
+          await loadLoans();
+          setShowImportModal(false);
+        } catch (e) {
+          alert('Failed to import: ' + e.message);
+        }
+      };
+
+      const handleAddLoan = async (newLoan) => {
+        const loanId = `loan-${Date.now()}`;
+        const loanWithId = { ...newLoan, id: loanId };
+        const row = loanToRow(loanWithId, session.user.id);
+
+        const { error } = await supabaseClient.from('loans').insert(row);
+        if (error) {
+          alert('Failed to save loan: ' + error.message);
+          return;
+        }
+
+        setLoans(prev => [...prev, { ...loanWithId, transactions: [] }]);
+        setShowNewLoanModal(false);
+      };
+
+      const handleAddTransaction = async (transaction) => {
+        const txnRow = {
+          id: transaction.id,
+          loan_id: selectedLoan.id,
+          user_id: session.user.id,
+          type: transaction.type,
+          amount: transaction.amount,
+          date: transaction.date,
+          description: transaction.description || '',
+        };
+
+        const { error } = await supabaseClient.from('transactions').insert(txnRow);
+        if (error) {
+          alert('Failed to save transaction: ' + error.message);
+          return;
+        }
+
+        setLoans(prev => prev.map(loan => {
+          if (loan.id === selectedLoan.id) {
+            return {
+              ...loan,
+              transactions: [...loan.transactions, transaction],
+            };
+          }
+          return loan;
+        }));
+        setSelectedLoan(prev => ({
+          ...prev,
+          transactions: [...prev.transactions, transaction],
+        }));
+        setShowTransactionModal(false);
+      };
+
+      const handleUpdateTransaction = async (updatedTransaction, targetLoanId) => {
+        const sourceLoanId = selectedLoan.id;
+        const isMovingLoan = targetLoanId !== sourceLoanId;
+
+        const { error } = await supabaseClient
+          .from('transactions')
+          .update({
+            type: updatedTransaction.type,
+            amount: updatedTransaction.amount,
+            date: updatedTransaction.date,
+            description: updatedTransaction.description || '',
+            loan_id: targetLoanId,
+          })
+          .eq('id', updatedTransaction.id);
+
+        if (error) {
+          alert('Failed to update transaction: ' + error.message);
+          return;
+        }
+
+        setLoans(prev => prev.map(loan => {
+          if (isMovingLoan) {
+            if (loan.id === sourceLoanId) {
+              return {
+                ...loan,
+                transactions: loan.transactions.filter(t => t.id !== updatedTransaction.id),
+              };
+            }
+            if (loan.id === targetLoanId) {
+              return {
+                ...loan,
+                transactions: [...loan.transactions, updatedTransaction],
+              };
+            }
+          } else {
+            if (loan.id === sourceLoanId) {
+              return {
+                ...loan,
+                transactions: loan.transactions.map(t =>
+                  t.id === updatedTransaction.id ? updatedTransaction : t
+                ),
+              };
+            }
+          }
+          return loan;
+        }));
+
+        if (isMovingLoan) {
+          setSelectedLoan(prev => ({
+            ...prev,
+            transactions: prev.transactions.filter(t => t.id !== updatedTransaction.id),
+          }));
+        } else {
+          setSelectedLoan(prev => ({
+            ...prev,
+            transactions: prev.transactions.map(t =>
+              t.id === updatedTransaction.id ? updatedTransaction : t
+            ),
+          }));
+        }
+
+        setShowTransactionModal(false);
+        setEditingTransaction(null);
+      };
+
+      const handleEditTransaction = (transaction) => {
+        setEditingTransaction(transaction);
+        setShowTransactionModal(true);
+      };
+
+      const handleCloseModal = () => {
+        setShowTransactionModal(false);
+        setEditingTransaction(null);
+      };
+
+      const totalCommitment = loans.reduce((sum, l) => sum + l.totalLoanAmount, 0);
+      const totalCurrentBalance = loans.reduce((sum, l) => sum + calculateLoanMetrics(l).currentBalance, 0);
+      const totalInterestCollected = loans.reduce((sum, l) => sum + calculateLoanMetrics(l).totalInterestPaid, 0);
+      const totalInterestOwed = loans.reduce((sum, l) => sum + calculateLoanMetrics(l).interestOwedToday, 0);
+      
+      // Calculate overdue loans
+      const loanStatuses = loans.map(l => {
+        const metrics = calculateLoanMetrics(l);
+        return { ...getPaymentStatus(l, metrics), metrics };
+      });
+      const overdueCount = loanStatuses.filter(s => s.isOverdue).length;
+      const nextPaymentDue = loanStatuses
+        .filter(s => s.nextDueDate)
+        .sort((a, b) => a.nextDueDate - b.nextDueDate)[0];
+
+      const summaryStats = [
+        { label: 'Outstanding Balance', value: formatCurrency(totalCurrentBalance), sublabel: `${loans.length} active loans`, color: '#63b3ed' },
+        { label: 'Interest Collected', value: formatCurrency(totalInterestCollected), sublabel: 'Total to date', color: '#68d391' },
+        { 
+          label: 'Interest Owed Today', 
+          value: formatCurrency(totalInterestOwed), 
+          sublabel: 'Accrued across all loans',
+          color: totalInterestOwed > 0 ? '#f6ad55' : '#68d391',
+          isAlert: overdueCount > 0
+        },
+        { 
+          label: 'Payment Status', 
+          value: overdueCount > 0 ? `${overdueCount} Overdue` : 'All Current',
+          sublabel: nextPaymentDue?.nextDueDate 
+            ? `Next due: ${nextPaymentDue.nextDueDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+            : 'No payments due',
+          color: overdueCount > 0 ? '#ef4444' : '#68d391',
+          isAlert: overdueCount > 0
+        },
+      ];
+
+      if (dataLoading) {
+        return (
+          <div style={{
+            minHeight: '100vh',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#a0aec0',
+            fontSize: '16px',
+          }}>
+            Loading your loans...
+          </div>
+        );
+      }
+
+      if (dataError) {
+        return (
+          <div style={{
+            minHeight: '100vh',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '16px',
+          }}>
+            <div style={{ color: '#ef4444', fontSize: '16px' }}>Failed to load data: {dataError}</div>
+            <button
+              onClick={loadLoans}
+              style={{
+                background: 'linear-gradient(135deg, #63b3ed 0%, #4299e1 100%)',
+                border: 'none',
+                borderRadius: '8px',
+                padding: '10px 20px',
+                color: '#fff',
+                fontSize: '14px',
+                cursor: 'pointer',
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        );
+      }
+
+      return (
+        <div style={{ maxWidth: '1400px', margin: '0 auto', padding: '40px 24px' }}>
+          <div style={{ marginBottom: '40px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+                <div style={{
+                  width: '40px',
+                  height: '40px',
+                  background: 'linear-gradient(135deg, #63b3ed 0%, #4299e1 100%)',
+                  borderRadius: '10px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}>
+                  <Icon name="DollarSign" size={22} style={{ color: '#fff' }} />
+                </div>
+                <h1 style={{ color: '#fff', fontSize: '28px', fontWeight: '700', margin: 0 }}>
+                  Hard Money Loan Tracker
+                </h1>
+              </div>
+              <p style={{ color: '#718096', fontSize: '15px', margin: 0 }}>
+                Manage your construction loan portfolio
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button
+                onClick={() => setShowImportModal(true)}
+                style={{
+                  background: 'rgba(255,255,255,0.05)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  borderRadius: '8px',
+                  padding: '10px 16px',
+                  color: '#a0aec0',
+                  fontSize: '13px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <Icon name="Upload" size={16} />
+                Import
+              </button>
+              <button
+                onClick={handleExportData}
+                style={{
+                  background: 'rgba(255,255,255,0.05)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  borderRadius: '8px',
+                  padding: '10px 16px',
+                  color: '#a0aec0',
+                  fontSize: '13px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <Icon name="Download" size={16} />
+                Export
+              </button>
+              <button
+                onClick={() => setShowNewLoanModal(true)}
+                style={{
+                  background: 'linear-gradient(135deg, #63b3ed 0%, #4299e1 100%)',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '10px 16px',
+                  color: '#fff',
+                  fontSize: '13px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <Icon name="Plus" size={16} />
+                New Loan
+              </button>
+              <button
+                onClick={onLogout}
+                style={{
+                  background: 'rgba(255,255,255,0.05)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  borderRadius: '8px',
+                  padding: '10px 16px',
+                  color: '#a0aec0',
+                  fontSize: '13px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <Icon name="LogOut" size={16} />
+                Logout
+              </button>
+            </div>
+          </div>
+
+          {selectedLoan ? (
+            <LoanDetail
+              loan={selectedLoan}
+              loans={loans}
+              onBack={() => setSelectedLoan(null)}
+              onAddTransaction={() => {
+                setEditingTransaction(null);
+                setShowTransactionModal(true);
+              }}
+              onEditTransaction={handleEditTransaction}
+            />
+          ) : (
+            <>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(4, 1fr)',
+                gap: '16px',
+                marginBottom: '32px',
+              }}>
+                {summaryStats.map((stat, i) => (
+                  <div key={i} style={{
+                    background: stat.isAlert 
+                      ? 'linear-gradient(135deg, rgba(239, 68, 68, 0.15) 0%, rgba(239, 68, 68, 0.05) 100%)'
+                      : 'linear-gradient(135deg, rgba(99, 179, 237, 0.1) 0%, rgba(66, 153, 225, 0.05) 100%)',
+                    borderRadius: '14px',
+                    padding: '24px',
+                    border: stat.isAlert 
+                      ? '1px solid rgba(239, 68, 68, 0.3)'
+                      : '1px solid rgba(99, 179, 237, 0.2)',
+                  }}>
+                    <div style={{ color: '#a0aec0', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>
+                      {stat.label}
+                    </div>
+                    <div style={{ color: stat.color || '#fff', fontSize: '28px', fontWeight: '700', fontFamily: '"JetBrains Mono", monospace', marginBottom: '4px' }}>
+                      {stat.value}
+                    </div>
+                    <div style={{ color: '#718096', fontSize: '13px' }}>{stat.sublabel}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Portfolio Chart */}
+              {loans.some(l => l.transactions.length > 0) && (
+                <div style={{
+                  background: 'linear-gradient(135deg, #1a1f2e 0%, #0f1219 100%)',
+                  borderRadius: '16px',
+                  padding: '24px',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  marginBottom: '24px',
+                }}>
+                  <h3 style={{ color: '#fff', fontSize: '16px', fontWeight: '600', margin: '0 0 16px 0' }}>
+                    Portfolio Overview
+                  </h3>
+                  <div style={{ height: '300px', position: 'relative' }}>
+                    <PortfolioChart loans={loans} />
+                  </div>
+                  <div style={{ display: 'flex', gap: '20px', marginTop: '12px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div style={{ width: '16px', height: '3px', borderRadius: '2px', background: '#63b3ed' }} />
+                      <span style={{ color: '#718096', fontSize: '12px' }}>Principal Balance (left)</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div style={{ width: '16px', height: '3px', borderRadius: '2px', background: '#f6ad55' }} />
+                      <span style={{ color: '#718096', fontSize: '12px' }}>Interest Owed (right)</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div style={{ width: '16px', height: '0px', borderTop: '2px dashed rgba(99,179,237,0.5)' }} />
+                      <span style={{ color: '#718096', fontSize: '12px' }}>Draw</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div style={{ width: '16px', height: '0px', borderTop: '2px dashed rgba(72,187,120,0.5)' }} />
+                      <span style={{ color: '#718096', fontSize: '12px' }}>Interest Payment</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Daily Data Table (collapsible) */}
+              {loans.some(l => l.transactions.length > 0) && (() => {
+                const portfolioData = buildPortfolioDailyData(loans);
+                if (portfolioData.length === 0) return null;
+                return (
+                  <div style={{
+                    background: 'linear-gradient(135deg, #1a1f2e 0%, #0f1219 100%)',
+                    borderRadius: '16px',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    marginBottom: '24px',
+                    overflow: 'hidden',
+                  }}>
+                    <button
+                      onClick={() => setShowDailyTable(!showDailyTable)}
+                      style={{
+                        width: '100%',
+                        background: 'none',
+                        border: 'none',
+                        padding: '16px 24px',
+                        color: '#fff',
+                        fontSize: '16px',
+                        fontWeight: '600',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <span>Daily Interest Accrual Table</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ color: '#718096', fontSize: '12px', fontWeight: '400' }}>{portfolioData.length} days</span>
+                        <Icon name={showDailyTable ? "ChevronUp" : "ChevronDown"} size={18} style={{ color: '#718096' }} />
+                      </div>
+                    </button>
+                    {showDailyTable && (
+                      <div style={{ padding: '0 24px 24px', overflowX: 'auto' }}>
+                        <table style={{
+                          width: '100%',
+                          borderCollapse: 'collapse',
+                          fontSize: '13px',
+                          fontFamily: '"JetBrains Mono", monospace',
+                        }}>
+                          <thead>
+                            <tr>
+                              {['Date', 'Outstanding Balance', 'Daily Interest', 'Interest Owed', 'Interest Payment'].map((h, i) => (
+                                <th key={i} style={{
+                                  textAlign: i === 0 ? 'left' : 'right',
+                                  padding: '10px 12px',
+                                  color: '#a0aec0',
+                                  fontSize: '10px',
+                                  textTransform: 'uppercase',
+                                  letterSpacing: '0.5px',
+                                  borderBottom: '1px solid rgba(255,255,255,0.1)',
+                                  position: 'sticky',
+                                  top: 0,
+                                  background: '#1a1f2e',
+                                  fontWeight: '600',
+                                }}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {[...portfolioData].reverse().map((day, i) => {
+                              const hasPayment = day.interestPayment > 0;
+                              return (
+                                <tr key={day.date} style={{
+                                  background: hasPayment ? 'rgba(72, 187, 120, 0.08)' : i % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent',
+                                }}>
+                                  <td style={{ padding: '8px 12px', color: '#e2e8f0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                                    {formatDate(day.date)}
+                                  </td>
+                                  <td style={{ padding: '8px 12px', color: '#63b3ed', textAlign: 'right', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                                    {formatCurrency(day.totalBalance)}
+                                  </td>
+                                  <td style={{ padding: '8px 12px', color: '#f6ad55', textAlign: 'right', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                                    {formatCurrency(day.dailyInterest)}
+                                  </td>
+                                  <td style={{ padding: '8px 12px', color: day.interestOwed > 0 ? '#ef4444' : '#68d391', textAlign: 'right', fontWeight: '600', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                                    {formatCurrency(day.interestOwed)}
+                                  </td>
+                                  <td style={{ padding: '8px 12px', color: hasPayment ? '#68d391' : '#4a5568', textAlign: 'right', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                                    {hasPayment ? formatCurrency(day.interestPayment) : '—'}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              <div style={{ marginBottom: '16px' }}>
+                <h2 style={{ color: '#fff', fontSize: '18px', fontWeight: '600', margin: '0 0 16px 0' }}>Active Loans</h2>
+              </div>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))',
+                gap: '20px',
+              }}>
+                {loans.map(loan => (
+                  <LoanCard
+                    key={loan.id}
+                    loan={loan}
+                    onClick={() => setSelectedLoan(loan)}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+
+          <TransactionModal
+            isOpen={showTransactionModal}
+            onClose={handleCloseModal}
+            onSave={handleAddTransaction}
+            onUpdate={handleUpdateTransaction}
+            loan={selectedLoan}
+            loans={loans}
+            editingTransaction={editingTransaction}
+          />
+
+          <ImportModal
+            isOpen={showImportModal}
+            onClose={() => setShowImportModal(false)}
+            onImport={handleImportData}
+          />
+
+          <NewLoanModal
+            isOpen={showNewLoanModal}
+            onClose={() => setShowNewLoanModal(false)}
+            onSave={handleAddLoan}
+          />
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
