@@ -2753,6 +2753,387 @@
     }
 
     // ============================================
+    // ADMIN PAGE
+    // ============================================
+    function AdminPage({ onBack, session }) {
+      const [users, setUsers] = useState([]);
+      const [allLoans, setAllLoans] = useState([]);
+      const [accessMappings, setAccessMappings] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [saving, setSaving] = useState(false);
+      const [error, setError] = useState(null);
+      const [selectedUserId, setSelectedUserId] = useState(null);
+      const [searchTerm, setSearchTerm] = useState('');
+
+      useEffect(() => {
+        loadAdminData();
+      }, []);
+
+      const loadAdminData = async () => {
+        try {
+          setLoading(true);
+          setError(null);
+
+          const { data: profilesData, error: profilesError } = await supabaseClient
+            .from('profiles')
+            .select('*')
+            .order('created_at', { ascending: true });
+
+          if (profilesError) throw profilesError;
+
+          const { data: loansData, error: loansError } = await supabaseClient
+            .from('loans')
+            .select('id, lender_name, borrower_name, property_address, user_id, created_at')
+            .order('created_at', { ascending: true });
+
+          if (loansError) throw loansError;
+
+          const { data: accessData, error: accessError } = await supabaseClient
+            .from('user_loan_access')
+            .select('*');
+
+          if (accessError) throw accessError;
+
+          setUsers(profilesData || []);
+          setAllLoans(loansData || []);
+          setAccessMappings(accessData || []);
+        } catch (err) {
+          setError(err.message);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const hasAccess = (userId, loanId) => {
+        const loan = allLoans.find(l => l.id === loanId);
+        if (loan && loan.user_id === userId) return 'owner';
+        return accessMappings.some(m => m.user_id === userId && m.loan_id === loanId) ? 'granted' : false;
+      };
+
+      const toggleAccess = async (userId, loanId) => {
+        const currentAccess = hasAccess(userId, loanId);
+        if (currentAccess === 'owner') return;
+
+        setSaving(true);
+        try {
+          if (currentAccess === 'granted') {
+            const { error } = await supabaseClient
+              .from('user_loan_access')
+              .delete()
+              .eq('user_id', userId)
+              .eq('loan_id', loanId);
+
+            if (error) throw error;
+
+            setAccessMappings(prev =>
+              prev.filter(m => !(m.user_id === userId && m.loan_id === loanId))
+            );
+          } else {
+            const { error } = await supabaseClient
+              .from('user_loan_access')
+              .insert({
+                user_id: userId,
+                loan_id: loanId,
+                granted_by: session.user.id,
+              });
+
+            if (error) throw error;
+
+            setAccessMappings(prev => [...prev, {
+              user_id: userId,
+              loan_id: loanId,
+              granted_by: session.user.id,
+              created_at: new Date().toISOString(),
+            }]);
+          }
+        } catch (err) {
+          alert('Failed to update access: ' + err.message);
+        } finally {
+          setSaving(false);
+        }
+      };
+
+      const filteredLoans = allLoans.filter(loan =>
+        loan.property_address?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        loan.borrower_name?.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+
+      const getLoanOwner = (loanUserId) => {
+        const owner = users.find(u => u.id === loanUserId);
+        return owner?.email || 'Unknown';
+      };
+
+      if (loading) {
+        return (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            minHeight: '400px',
+            color: '#a0aec0',
+          }}>
+            Loading admin data...
+          </div>
+        );
+      }
+
+      if (error) {
+        return (
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            minHeight: '400px',
+            gap: '16px',
+          }}>
+            <div style={{ color: '#ef4444' }}>Error: {error}</div>
+            <button
+              onClick={loadAdminData}
+              style={{
+                background: 'linear-gradient(135deg, #63b3ed 0%, #4299e1 100%)',
+                border: 'none',
+                borderRadius: '8px',
+                padding: '10px 20px',
+                color: '#fff',
+                cursor: 'pointer',
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        );
+      }
+
+      return (
+        <div>
+          <div style={{ marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <button
+              onClick={onBack}
+              style={{
+                background: 'rgba(255,255,255,0.05)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '8px',
+                padding: '10px 16px',
+                color: '#a0aec0',
+                fontSize: '13px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+              }}
+            >
+              <Icon name="ArrowLeft" size={16} />
+              Back to Loans
+            </button>
+            <h2 style={{ color: '#fff', fontSize: '24px', fontWeight: '700', margin: 0 }}>
+              Admin Panel
+            </h2>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: '24px' }}>
+            {/* Left: User list */}
+            <div style={{
+              background: 'linear-gradient(135deg, #1a1f2e 0%, #0f1219 100%)',
+              borderRadius: '16px',
+              border: '1px solid rgba(255,255,255,0.08)',
+              padding: '20px',
+              maxHeight: '600px',
+              overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
+            }}>
+              <h3 style={{ color: '#fff', fontSize: '16px', fontWeight: '600', margin: '0 0 16px 0' }}>
+                Users ({users.length})
+              </h3>
+              <div style={{ flex: 1, overflowY: 'auto' }}>
+                {users.map(user => (
+                  <div
+                    key={user.id}
+                    onClick={() => setSelectedUserId(user.id)}
+                    style={{
+                      padding: '12px',
+                      borderRadius: '8px',
+                      marginBottom: '8px',
+                      cursor: 'pointer',
+                      background: selectedUserId === user.id
+                        ? 'rgba(99, 179, 237, 0.2)'
+                        : 'rgba(255,255,255,0.03)',
+                      border: selectedUserId === user.id
+                        ? '1px solid rgba(99, 179, 237, 0.4)'
+                        : '1px solid transparent',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    <Icon name="User" size={14} style={{ color: '#718096' }} />
+                    <span style={{ color: '#e2e8f0', fontSize: '13px', flex: 1 }}>{user.email}</span>
+                    {user.id === session.user.id && (
+                      <span style={{
+                        background: 'rgba(99, 179, 237, 0.2)',
+                        color: '#63b3ed',
+                        padding: '2px 6px',
+                        borderRadius: '4px',
+                        fontSize: '10px',
+                        fontWeight: '600',
+                      }}>YOU</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Right: Loan access grid */}
+            <div style={{
+              background: 'linear-gradient(135deg, #1a1f2e 0%, #0f1219 100%)',
+              borderRadius: '16px',
+              border: '1px solid rgba(255,255,255,0.08)',
+              padding: '20px',
+              maxHeight: '600px',
+              overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <h3 style={{ color: '#fff', fontSize: '16px', fontWeight: '600', margin: 0 }}>
+                  Loan Access
+                </h3>
+                <input
+                  type="text"
+                  placeholder="Search loans..."
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                  style={{
+                    background: 'rgba(255,255,255,0.05)',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    borderRadius: '8px',
+                    padding: '8px 12px',
+                    color: '#e2e8f0',
+                    fontSize: '13px',
+                    width: '200px',
+                    outline: 'none',
+                  }}
+                />
+              </div>
+
+              {selectedUserId ? (
+                <div style={{ flex: 1, overflowY: 'auto' }}>
+                  <div style={{
+                    background: 'rgba(99, 179, 237, 0.1)',
+                    borderRadius: '8px',
+                    padding: '10px 12px',
+                    marginBottom: '16px',
+                    color: '#63b3ed',
+                    fontSize: '13px',
+                  }}>
+                    Managing access for: <strong>{users.find(u => u.id === selectedUserId)?.email}</strong>
+                  </div>
+
+                  {filteredLoans.length === 0 ? (
+                    <div style={{ color: '#718096', textAlign: 'center', padding: '40px' }}>
+                      No loans found
+                    </div>
+                  ) : (
+                    filteredLoans.map(loan => {
+                      const access = hasAccess(selectedUserId, loan.id);
+                      return (
+                        <div
+                          key={loan.id}
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            padding: '12px',
+                            background: 'rgba(255,255,255,0.03)',
+                            borderRadius: '8px',
+                            marginBottom: '8px',
+                          }}
+                        >
+                          <div style={{ flex: 1 }}>
+                            <div style={{ color: '#e2e8f0', fontSize: '14px', fontWeight: '500' }}>
+                              {loan.property_address || 'No address'}
+                            </div>
+                            <div style={{ color: '#718096', fontSize: '12px', marginTop: '2px' }}>
+                              Borrower: {loan.borrower_name} • Owner: {getLoanOwner(loan.user_id)}
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            {access === 'owner' ? (
+                              <span style={{
+                                background: 'linear-gradient(135deg, #4299e1 0%, #3182ce 100%)',
+                                color: '#fff',
+                                padding: '6px 12px',
+                                borderRadius: '6px',
+                                fontSize: '11px',
+                                fontWeight: '600',
+                              }}>
+                                OWNER
+                              </span>
+                            ) : (
+                              <button
+                                onClick={() => toggleAccess(selectedUserId, loan.id)}
+                                disabled={saving}
+                                style={{
+                                  background: access === 'granted'
+                                    ? 'linear-gradient(135deg, #48bb78 0%, #38a169 100%)'
+                                    : 'rgba(255,255,255,0.1)',
+                                  border: 'none',
+                                  borderRadius: '6px',
+                                  padding: '6px 12px',
+                                  color: access === 'granted' ? '#fff' : '#a0aec0',
+                                  cursor: saving ? 'not-allowed' : 'pointer',
+                                  fontSize: '12px',
+                                  fontWeight: '500',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  opacity: saving ? 0.6 : 1,
+                                }}
+                              >
+                                {access === 'granted' ? (
+                                  <>
+                                    <Icon name="Check" size={12} />
+                                    Has Access
+                                  </>
+                                ) : (
+                                  <>
+                                    <Icon name="Plus" size={12} />
+                                    Grant Access
+                                  </>
+                                )}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              ) : (
+                <div style={{
+                  flex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#718096',
+                  fontSize: '14px',
+                }}>
+                  <div style={{ textAlign: 'center' }}>
+                    <Icon name="Users" size={32} style={{ marginBottom: '12px', opacity: 0.5 }} />
+                    <p style={{ margin: 0 }}>Select a user from the left to manage their loan access</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================
     // MAIN APPLICATION
     // ============================================
     function LoanTracker({ session, onLogout }) {
@@ -2765,6 +3146,22 @@
       const [showNewLoanModal, setShowNewLoanModal] = useState(false);
       const [showImportModal, setShowImportModal] = useState(false);
       const [showDailyTable, setShowDailyTable] = useState(false);
+      const [isAdmin, setIsAdmin] = useState(false);
+      const [showAdminPage, setShowAdminPage] = useState(false);
+
+      // Check admin status on mount
+      useEffect(() => {
+        const checkAdminStatus = async () => {
+          const { data, error } = await supabaseClient
+            .from('admin_users')
+            .select('user_id')
+            .eq('user_id', session.user.id)
+            .single();
+
+          setIsAdmin(!!data && !error);
+        };
+        checkAdminStatus();
+      }, [session.user.id]);
 
       // Load loans and transactions from Supabase
       const loadLoans = async () => {
@@ -3153,6 +3550,27 @@
                 <Icon name="Plus" size={16} />
                 New Loan
               </button>
+              {isAdmin && (
+                <button
+                  onClick={() => setShowAdminPage(true)}
+                  style={{
+                    background: 'linear-gradient(135deg, #805ad5 0%, #6b46c1 100%)',
+                    border: 'none',
+                    borderRadius: '8px',
+                    padding: '10px 16px',
+                    color: '#fff',
+                    fontSize: '13px',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                >
+                  <Icon name="Shield" size={16} />
+                  Admin
+                </button>
+              )}
               <button
                 onClick={onLogout}
                 style={{
@@ -3174,7 +3592,9 @@
             </div>
           </div>
 
-          {selectedLoan ? (
+          {showAdminPage ? (
+            <AdminPage onBack={() => setShowAdminPage(false)} session={session} />
+          ) : selectedLoan ? (
             <LoanDetail
               loan={selectedLoan}
               loans={loans}
